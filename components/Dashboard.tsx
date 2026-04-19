@@ -98,13 +98,13 @@ const Dashboard: React.FC<DashboardProps> = ({ students, sessions, payments, fin
 
 
   const StatCard = ({ title, value, sub, icon: Icon, color, trend }: any) => (
-    <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 flex items-start justify-between transition-all hover:shadow-md">
+    <div className="bg-white p-6 rounded-2xl border border-cream-border flex items-start justify-between transition-all hover:shadow-md">
       <div>
-        <p className="text-sm font-medium text-slate-500 mb-1">{title}</p>
-        <h3 className="text-2xl font-bold text-slate-800">{value}</h3>
+        <p className="text-sm font-medium text-stone-500 mb-1">{title}</p>
+        <h3 className="font-serif text-3xl font-semibold text-stone-900 tracking-tight">{value}</h3>
         {sub && (
             <div className="flex items-center gap-1 mt-2">
-                <span className={`text-xs px-1.5 py-0.5 rounded ${trend === 'up' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
+                <span className={`text-xs px-1.5 py-0.5 rounded ${trend === 'up' ? 'bg-emerald-100 text-emerald-700' : 'bg-cream-soft text-stone-600'}`}>
                     {sub}
                 </span>
             </div>
@@ -121,10 +121,10 @@ const Dashboard: React.FC<DashboardProps> = ({ students, sessions, payments, fin
       
       {/* Settings Toggle */}
       <div className="flex justify-between items-center">
-          <h2 className="text-lg font-semibold text-slate-700">Business Overview</h2>
+          <h2 className="font-serif text-xl font-semibold text-stone-900">Business Overview</h2>
           <button 
             onClick={() => { setShowSettings(!showSettings); setTempOffset(financialOffset.toString()); }}
-            className="flex items-center gap-2 text-xs text-slate-500 hover:text-indigo-600 transition-colors bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm"
+            className="flex items-center gap-2 text-xs text-stone-500 hover:text-coral-600 transition-colors bg-white px-3 py-1.5 rounded-lg border border-cream-border shadow-sm"
           >
               <Settings className="w-3 h-3" />
               Settings
@@ -132,24 +132,24 @@ const Dashboard: React.FC<DashboardProps> = ({ students, sessions, payments, fin
       </div>
 
       {showSettings && (
-          <div className="bg-white p-6 rounded-xl border border-indigo-100 shadow-sm animate-in slide-in-from-top-2">
-              <h3 className="font-semibold text-slate-800 mb-4 flex items-center gap-2">
-                  <Settings className="w-5 h-5 text-indigo-600" />
+          <div className="bg-white p-6 rounded-xl border border-coral-100 shadow-sm animate-in slide-in-from-top-2">
+              <h3 className="font-semibold text-stone-800 mb-4 flex items-center gap-2">
+                  <Settings className="w-5 h-5 text-coral-600" />
                   Data Configuration
               </h3>
               <div className="max-w-md">
-                  <label className="block text-sm font-medium text-slate-600 mb-2">Historical Revenue Offset ($)</label>
+                  <label className="block text-sm font-medium text-stone-600 mb-2">Historical Revenue Offset ($)</label>
                   <div className="flex gap-2">
                       <input 
                           type="number" 
                           value={tempOffset}
                           onChange={(e) => setTempOffset(e.target.value)}
-                          className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                          className="w-full px-4 py-2 border border-cream-border rounded-lg focus:outline-none focus:ring-2 focus:ring-coral-500 text-sm"
                           placeholder="0.00"
                       />
                       <button 
                         onClick={handleSaveOffset}
-                        className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 flex items-center gap-2 transition-colors"
+                        className="bg-coral-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-coral-700 flex items-center gap-2 transition-colors"
                       >
                           <Save className="w-4 h-4" />
                           Save
@@ -181,7 +181,7 @@ const Dashboard: React.FC<DashboardProps> = ({ students, sessions, payments, fin
           value={`${attendanceRate}%`} 
           sub="Overall"
           icon={CalendarCheck} 
-          color="bg-violet-500" 
+          color="bg-coral-500" 
         />
         <StatCard 
           title="Outstanding" 
@@ -196,14 +196,14 @@ const Dashboard: React.FC<DashboardProps> = ({ students, sessions, payments, fin
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
         {/* Revenue Chart */}
-        <div className="lg:col-span-2 bg-white p-6 rounded-xl shadow-sm border border-slate-100 flex flex-col">
+        <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-cream-border flex flex-col">
             <div className="flex items-center gap-2 mb-6">
                 <div className="p-2 bg-emerald-50 rounded-lg">
                     <DollarSign className="w-5 h-5 text-emerald-600" />
                 </div>
                 <div>
-                    <h3 className="font-bold text-slate-800">Revenue Trend</h3>
-                    <p className="text-xs text-slate-400">Monthly income over time</p>
+                    <h3 className="font-serif text-lg font-semibold text-stone-900">Revenue Trend</h3>
+                    <p className="text-xs text-stone-400">Monthly income over time</p>
                 </div>
             </div>
             
@@ -217,9 +217,9 @@ const Dashboard: React.FC<DashboardProps> = ({ students, sessions, payments, fin
                                     <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
                                 </linearGradient>
                             </defs>
-                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                            <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 12}} dy={10} />
-                            <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 12}} tickFormatter={(value) => `$${value}`} />
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#EDE5D7" />
+                            <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#78716C', fontSize: 12}} dy={10} />
+                            <YAxis axisLine={false} tickLine={false} tick={{fill: '#78716C', fontSize: 12}} tickFormatter={(value) => `$${value}`} />
                             <RechartsTooltip 
                                 contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                                 formatter={(value: number) => [`$${value}`, 'Revenue']}
@@ -228,7 +228,7 @@ const Dashboard: React.FC<DashboardProps> = ({ students, sessions, payments, fin
                         </AreaChart>
                     </ResponsiveContainer>
                 ) : (
-                    <div className="h-full flex items-center justify-center text-slate-400 bg-slate-50 rounded-lg border border-dashed border-slate-200">
+                    <div className="h-full flex items-center justify-center text-stone-400 bg-cream rounded-lg border border-dashed border-cream-border">
                         No payment data available yet.
                     </div>
                 )}
@@ -236,14 +236,14 @@ const Dashboard: React.FC<DashboardProps> = ({ students, sessions, payments, fin
         </div>
 
         {/* Attendance Breakdown Pie Chart */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 flex flex-col">
+        <div className="bg-white p-6 rounded-2xl border border-cream-border flex flex-col">
             <div className="flex items-center gap-2 mb-6">
-                 <div className="p-2 bg-violet-50 rounded-lg">
-                    <Activity className="w-5 h-5 text-violet-600" />
+                 <div className="p-2 bg-coral-50 rounded-lg">
+                    <Activity className="w-5 h-5 text-coral-600" />
                 </div>
                 <div>
-                    <h3 className="font-bold text-slate-800">Attendance</h3>
-                    <p className="text-xs text-slate-400">Session status distribution</p>
+                    <h3 className="font-serif text-lg font-semibold text-stone-900">Attendance</h3>
+                    <p className="text-xs text-stone-400">Session status distribution</p>
                 </div>
             </div>
 
@@ -269,14 +269,14 @@ const Dashboard: React.FC<DashboardProps> = ({ students, sessions, payments, fin
                         </PieChart>
                     </ResponsiveContainer>
                  ) : (
-                    <div className="h-full flex items-center justify-center text-slate-400 bg-slate-50 rounded-lg border border-dashed border-slate-200">
+                    <div className="h-full flex items-center justify-center text-stone-400 bg-cream rounded-lg border border-dashed border-cream-border">
                         No session data available yet.
                     </div>
                  )}
                  {attendanceData.length > 0 && (
                      <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none pb-8">
-                         <span className="text-3xl font-bold text-slate-800">{totalSessions}</span>
-                         <p className="text-xs text-slate-400 uppercase font-semibold">Total</p>
+                         <span className="font-serif text-4xl font-semibold text-stone-900">{totalSessions}</span>
+                         <p className="text-xs text-stone-400 uppercase font-semibold">Total</p>
                      </div>
                  )}
             </div>
@@ -286,28 +286,28 @@ const Dashboard: React.FC<DashboardProps> = ({ students, sessions, payments, fin
       {/* Bottom Row: Weekly Activity & Recent List */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
            {/* Weekly Bar Chart */}
-           <div className="lg:col-span-2 bg-white p-6 rounded-xl shadow-sm border border-slate-100 h-80">
+           <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-cream-border h-80">
                 <div className="flex items-center gap-2 mb-6">
-                    <div className="p-2 bg-indigo-50 rounded-lg">
-                        <Calendar className="w-5 h-5 text-indigo-600" />
+                    <div className="p-2 bg-coral-50 rounded-lg">
+                        <Calendar className="w-5 h-5 text-coral-600" />
                     </div>
                     <div>
-                        <h3 className="font-bold text-slate-800">Weekly Activity</h3>
-                        <p className="text-xs text-slate-400">Sessions per day (Last 7 Days)</p>
+                        <h3 className="font-serif text-lg font-semibold text-stone-900">Weekly Activity</h3>
+                        <p className="text-xs text-stone-400">Sessions per day (Last 7 Days)</p>
                     </div>
                 </div>
                 <ResponsiveContainer width="100%" height="80%">
                     <BarChart data={sessionActivityData} barSize={40}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 12}} dy={10} />
-                        <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 12}} allowDecimals={false} />
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#EDE5D7" />
+                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#78716C', fontSize: 12}} dy={10} />
+                        <YAxis axisLine={false} tickLine={false} tick={{fill: '#78716C', fontSize: 12}} allowDecimals={false} />
                         <RechartsTooltip 
-                            cursor={{fill: '#f8fafc'}}
+                            cursor={{fill: '#F5EFE4'}}
                             contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                         />
                         <Bar dataKey="count" radius={[4, 4, 0, 0]}>
                             {sessionActivityData.map((entry, index) => (
-                                <Cell key={`cell-${index}`} fill="#6366f1" />
+                                <Cell key={`cell-${index}`} fill="#D97757" />
                             ))}
                         </Bar>
                     </BarChart>
@@ -315,17 +315,17 @@ const Dashboard: React.FC<DashboardProps> = ({ students, sessions, payments, fin
            </div>
            
            {/* Recent Payments List */}
-           <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 h-80 overflow-hidden flex flex-col">
-                <h3 className="font-bold text-slate-800 mb-4">Recent Payments</h3>
+           <div className="bg-white p-6 rounded-2xl border border-cream-border h-80 overflow-hidden flex flex-col">
+                <h3 className="font-serif text-lg font-semibold text-stone-900 mb-4">Recent Payments</h3>
                 <div className="flex-1 overflow-y-auto pr-2 space-y-3 custom-scrollbar">
-                    {payments.length === 0 && <p className="text-sm text-slate-400 text-center py-10">No payments recorded.</p>}
+                    {payments.length === 0 && <p className="text-sm text-stone-400 text-center py-10">No payments recorded.</p>}
                     {[...payments].sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 10).map(payment => {
                         const student = students.find(s => s.id === payment.studentId);
                         return (
-                            <div key={payment.id} className="flex justify-between items-center p-3 bg-slate-50 rounded-lg border border-slate-100">
+                            <div key={payment.id} className="flex justify-between items-center p-3 bg-cream rounded-lg border border-cream-border">
                                 <div>
-                                    <p className="text-sm font-semibold text-slate-700">{student?.name || 'Unknown'}</p>
-                                    <p className="text-xs text-slate-400">{new Date(payment.date).toLocaleDateString()}</p>
+                                    <p className="text-sm font-semibold text-stone-700">{student?.name || 'Unknown'}</p>
+                                    <p className="text-xs text-stone-400">{new Date(payment.date).toLocaleDateString()}</p>
                                 </div>
                                 <span className="font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded text-sm">
                                     +${payment.amount}

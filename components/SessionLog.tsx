@@ -301,9 +301,9 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
     const allSlots = [...blanks, ...daySlots];
 
     return (
-        <div className="grid grid-cols-7 gap-px bg-slate-200 rounded-lg overflow-hidden border border-slate-200 animate-in fade-in">
+        <div className="grid grid-cols-7 gap-px bg-stone-200 rounded-lg overflow-hidden border border-cream-border animate-in fade-in">
             {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
-                <div key={d} className="bg-slate-50 p-2 text-center text-xs font-semibold text-slate-500 uppercase">
+                <div key={d} className="bg-cream p-2 text-center text-xs font-semibold text-stone-500 uppercase">
                     {d}
                 </div>
             ))}
@@ -317,13 +317,13 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
                     <div 
                         key={day} 
                         onClick={() => openAddModal(currentDayStr)}
-                        className="bg-white h-32 md:h-40 p-2 border-t border-slate-50 hover:bg-slate-50 transition-colors cursor-pointer overflow-y-auto"
+                        className="bg-white h-32 md:h-40 p-2 border-t border-slate-50 hover:bg-cream transition-colors cursor-pointer overflow-y-auto"
                     >
                         <div className="flex justify-between items-start mb-1">
                             <span className={`text-sm font-semibold ${
                                 new Date().toDateString() === new Date(year, month, day as number).toDateString() 
-                                ? 'bg-indigo-600 text-white w-6 h-6 flex items-center justify-center rounded-full' 
-                                : 'text-slate-700'
+                                ? 'bg-coral-600 text-white w-6 h-6 flex items-center justify-center rounded-full' 
+                                : 'text-stone-700'
                             }`}>
                                 {day}
                             </span>
@@ -365,7 +365,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
       });
 
       return (
-          <div className="grid grid-cols-7 gap-px bg-slate-200 rounded-lg overflow-hidden border border-slate-200 h-[600px] animate-in fade-in">
+          <div className="grid grid-cols-7 gap-px bg-stone-200 rounded-lg overflow-hidden border border-cream-border h-[600px] animate-in fade-in">
               {weekDays.map((day, i) => {
                   const isToday = new Date().toDateString() === day.toDateString();
                   const dateStr = day.toISOString().split('T')[0];
@@ -374,15 +374,15 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
 
                   return (
                       <div key={i} className="flex flex-col bg-white h-full group" onClick={() => openAddModal(dateStr)}>
-                          <div className={`p-3 text-center border-b border-slate-100 ${isToday ? 'bg-indigo-50' : ''}`}>
-                              <p className={`text-xs font-semibold uppercase ${isToday ? 'text-indigo-600' : 'text-slate-500'}`}>
+                          <div className={`p-3 text-center border-b border-cream-border ${isToday ? 'bg-coral-50' : ''}`}>
+                              <p className={`text-xs font-semibold uppercase ${isToday ? 'text-coral-600' : 'text-stone-500'}`}>
                                   {day.toLocaleDateString('en-US', { weekday: 'short' })}
                               </p>
-                              <p className={`text-lg font-bold mt-1 ${isToday ? 'text-indigo-700' : 'text-slate-800'}`}>
+                              <p className={`text-lg font-bold mt-1 ${isToday ? 'text-coral-700' : 'text-stone-800'}`}>
                                   {day.getDate()}
                               </p>
                           </div>
-                          <div className="flex-1 p-2 space-y-2 overflow-y-auto hover:bg-slate-50 transition-colors cursor-pointer">
+                          <div className="flex-1 p-2 space-y-2 overflow-y-auto hover:bg-cream transition-colors cursor-pointer">
                               {daySessions.map(session => (
                                   <div 
                                     key={session.id}
@@ -401,7 +401,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
                                       <div className="font-semibold text-xs mb-1 line-clamp-2">{session.topic}</div>
                                       <div className="flex -space-x-1 overflow-hidden pt-1">
                                           {session.studentIds.map((sid, idx) => (
-                                              <div key={idx} className="w-5 h-5 rounded-full bg-white flex items-center justify-center text-[8px] font-bold ring-1 ring-slate-200" title={students.find(s=>s.id===sid)?.name}>
+                                              <div key={idx} className="w-5 h-5 rounded-full bg-white flex items-center justify-center text-[8px] font-bold ring-1 ring-cream-border" title={students.find(s=>s.id===sid)?.name}>
                                                   {students.find(s => s.id === sid)?.name.charAt(0)}
                                               </div>
                                           ))}
@@ -410,7 +410,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
                               ))}
                               {daySessions.length === 0 && (
                                   <div className="h-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                                      <PlusIcon className="w-6 h-6 text-slate-300" />
+                                      <PlusIcon className="w-6 h-6 text-stone-300" />
                                   </div>
                               )}
                           </div>
@@ -436,15 +436,15 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
                   return (
                       <div 
                         key={monthIndex} 
-                        className="bg-white rounded-xl border border-slate-200 p-4 hover:shadow-md transition-shadow cursor-pointer"
+                        className="bg-white rounded-2xl border border-cream-border p-4 hover:shadow-md transition-shadow cursor-pointer"
                         onClick={() => {
                             setCurrentDate(new Date(currentYear, monthIndex, 1));
                             setViewMode('month');
                         }}
                       >
-                          <h4 className="font-bold text-slate-800 mb-2">{monthDate.toLocaleDateString('en-US', { month: 'long' })}</h4>
+                          <h4 className="font-bold text-stone-800 mb-2">{monthDate.toLocaleDateString('en-US', { month: 'long' })}</h4>
                           <div className="grid grid-cols-7 gap-1 text-[10px] text-center">
-                              {['S','M','T','W','T','F','S'].map(d => <span key={d} className="text-slate-400">{d}</span>)}
+                              {['S','M','T','W','T','F','S'].map(d => <span key={d} className="text-stone-400">{d}</span>)}
                               
                               {blanks.map((_, i) => <div key={`b-${i}`} />)}
                               
@@ -461,8 +461,8 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
                                   }
 
                                   return (
-                                      <div key={day} className="flex flex-col items-center justify-center h-5 w-5 rounded-full hover:bg-slate-100">
-                                          <span className={`text-slate-600 ${hasSession ? 'font-bold text-slate-900' : ''}`}>{day}</span>
+                                      <div key={day} className="flex flex-col items-center justify-center h-5 w-5 rounded-full hover:bg-cream-soft">
+                                          <span className={`text-stone-600 ${hasSession ? 'font-bold text-stone-900' : ''}`}>{day}</span>
                                           <div className={`w-1 h-1 rounded-full mt-[1px] ${dotColor}`}></div>
                                       </div>
                                   );
@@ -485,41 +485,41 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div className="flex items-center gap-4">
-            <h2 className="text-xl font-bold text-slate-800 min-w-[200px]">
+            <h2 className="text-xl font-serif font-semibold tracking-tight text-stone-800 min-w-[200px]">
                 {getHeaderText()}
             </h2>
             <div className="flex items-center gap-2">
                 <button 
                     onClick={handleToday}
-                    className="px-3 py-1.5 text-xs font-medium bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 transition-colors shadow-sm"
+                    className="px-3 py-1.5 text-xs font-medium bg-white border border-cream-border text-stone-600 rounded-lg hover:bg-cream transition-colors shadow-sm"
                 >
                     Today
                 </button>
-                <div className="flex items-center bg-white rounded-lg border border-slate-200 shadow-sm">
-                    <button onClick={handlePrev} className="p-1.5 hover:bg-slate-50 text-slate-600"><ChevronLeft className="w-5 h-5" /></button>
-                    <div className="w-px h-6 bg-slate-200"></div>
-                    <button onClick={handleNext} className="p-1.5 hover:bg-slate-50 text-slate-600"><ChevronRight className="w-5 h-5" /></button>
+                <div className="flex items-center bg-white rounded-lg border border-cream-border shadow-sm">
+                    <button onClick={handlePrev} className="p-1.5 hover:bg-cream text-stone-600"><ChevronLeft className="w-5 h-5" /></button>
+                    <div className="w-px h-6 bg-stone-200"></div>
+                    <button onClick={handleNext} className="p-1.5 hover:bg-cream text-stone-600"><ChevronRight className="w-5 h-5" /></button>
                 </div>
             </div>
         </div>
 
         <div className="flex items-center gap-3 w-full sm:w-auto">
-            <div className="flex p-1 bg-slate-200/50 rounded-lg">
+            <div className="flex p-1 bg-stone-200/50 rounded-lg">
                 <button 
                     onClick={() => setViewMode('year')}
-                    className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${viewMode === 'year' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${viewMode === 'year' ? 'bg-white text-coral-600 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
                 >
                     Year
                 </button>
                 <button 
                     onClick={() => setViewMode('month')}
-                    className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${viewMode === 'month' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${viewMode === 'month' ? 'bg-white text-coral-600 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
                 >
                     Month
                 </button>
                 <button 
                     onClick={() => setViewMode('week')}
-                    className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${viewMode === 'week' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${viewMode === 'week' ? 'bg-white text-coral-600 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
                 >
                     Week
                 </button>
@@ -527,7 +527,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
             
             <button
             onClick={() => openAddModal()}
-            className="flex-1 sm:flex-none bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+            className="flex-1 sm:flex-none bg-coral-600 hover:bg-coral-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
             >
             <CalendarIcon className="w-4 h-4" />
             <span className="hidden sm:inline">Log Session</span>
@@ -544,11 +544,11 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto animate-in zoom-in-95 duration-200 relative">
-                <div className="flex justify-between items-center p-6 border-b border-slate-100">
-                    <h3 className="text-lg font-bold text-slate-800">
+                <div className="flex justify-between items-center p-6 border-b border-cream-border">
+                    <h3 className="text-lg font-serif font-semibold tracking-tight text-stone-800">
                         {editingSessionId ? 'Edit Session' : 'Log New Session'}
                     </h3>
-                    <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                    <button onClick={() => setIsModalOpen(false)} className="text-stone-400 hover:text-stone-600">
                         <X className="w-5 h-5" />
                     </button>
                 </div>
@@ -556,7 +556,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
                 <form onSubmit={handleSubmit} className="p-6 space-y-4">
                     <div className="grid grid-cols-1 gap-4">
                         <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-2">Session Type</label>
+                            <label className="block text-sm font-medium text-stone-700 mb-2">Session Type</label>
                             <select
                                 value={sessionType}
                                 onChange={e => setSessionType(e.target.value as ClassType)}
@@ -569,7 +569,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
                         
                         {/* Student Dropdown Selector */}
                         <div className="relative">
-                            <label className="block text-sm font-medium text-slate-700 mb-2">Select Students</label>
+                            <label className="block text-sm font-medium text-stone-700 mb-2">Select Students</label>
                             
                             {/* Selected Students Chips */}
                             <div className="flex flex-wrap gap-2 mb-2">
@@ -577,7 +577,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
                                     const s = students.find(student => student.id === id);
                                     if(!s) return null;
                                     return (
-                                        <div key={id} className="bg-indigo-50 border border-indigo-200 text-indigo-700 px-3 py-1 rounded-full text-sm flex items-center gap-2">
+                                        <div key={id} className="bg-coral-50 border border-coral-200 text-coral-700 px-3 py-1 rounded-full text-sm flex items-center gap-2">
                                             {s.name}
                                             <button type="button" onClick={() => handleStudentToggle(id)}><X className="w-3 h-3" /></button>
                                         </div>
@@ -588,31 +588,31 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
                             <button 
                                 type="button"
                                 onClick={() => setIsStudentDropdownOpen(!isStudentDropdownOpen)}
-                                className="w-full p-2 border rounded-md flex justify-between items-center bg-white hover:bg-slate-50 text-left"
+                                className="w-full p-2 border rounded-md flex justify-between items-center bg-white hover:bg-cream text-left"
                             >
-                                <span className="text-slate-500 text-sm">
+                                <span className="text-stone-500 text-sm">
                                     {selectedStudents.length === 0 ? "Search and select students..." : `${selectedStudents.length} selected`}
                                 </span>
                                 {isStudentDropdownOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                             </button>
 
                             {isStudentDropdownOpen && (
-                                <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-20 max-h-60 overflow-hidden flex flex-col">
-                                    <div className="p-2 border-b border-slate-100">
+                                <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-cream-border rounded-lg shadow-lg z-20 max-h-60 overflow-hidden flex flex-col">
+                                    <div className="p-2 border-b border-cream-border">
                                         <div className="relative">
-                                            <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400" />
+                                            <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-stone-400" />
                                             <input 
                                                 autoFocus
                                                 type="text" 
                                                 placeholder="Search name..."
-                                                className="w-full pl-8 pr-2 py-1.5 text-sm bg-slate-50 rounded-md focus:outline-none"
+                                                className="w-full pl-8 pr-2 py-1.5 text-sm bg-cream rounded-md focus:outline-none"
                                                 value={studentSearch}
                                                 onChange={e => setStudentSearch(e.target.value)}
                                             />
                                         </div>
                                     </div>
                                     <div className="overflow-y-auto flex-1 p-1">
-                                        {filteredStudents.length === 0 && <div className="p-2 text-center text-xs text-slate-400">No active students found.</div>}
+                                        {filteredStudents.length === 0 && <div className="p-2 text-center text-xs text-stone-400">No active students found.</div>}
                                         {filteredStudents.map(s => (
                                             <button
                                                 key={s.id}
@@ -620,7 +620,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
                                                 onClick={() => handleStudentToggle(s.id)}
                                                 disabled={!selectedStudents.includes(s.id) && selectedStudents.length >= 2}
                                                 className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between ${
-                                                    selectedStudents.includes(s.id) ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-slate-50 text-slate-700 disabled:opacity-50'
+                                                    selectedStudents.includes(s.id) ? 'bg-coral-50 text-coral-700' : 'hover:bg-cream text-stone-700 disabled:opacity-50'
                                                 }`}
                                             >
                                                 <span>{s.name}</span>
@@ -635,8 +635,8 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
 
                     {/* Attendance Status Per Student */}
                     {selectedStudents.length > 0 && (
-                        <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 space-y-2">
-                            <label className="block text-xs font-semibold text-slate-500 uppercase">Attendance & Progress</label>
+                        <div className="bg-cream p-3 rounded-lg border border-cream-border space-y-2">
+                            <label className="block text-xs font-semibold text-stone-500 uppercase">Attendance & Progress</label>
                             {selectedStudents.map(id => {
                                 const s = students.find(student => student.id === id);
                                 if (!s) return null;
@@ -644,8 +644,8 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
                                 return (
                                     <div key={id} className="flex justify-between items-center gap-2">
                                         <div className="flex items-center gap-2 overflow-hidden flex-1">
-                                             <span className="text-sm font-medium text-slate-700 truncate">{s.name}</span>
-                                             {hasProgress && <span className="bg-violet-100 text-violet-700 text-[10px] px-1.5 py-0.5 rounded-full flex items-center gap-1"><TrendingUp className="w-3 h-3"/> Updated</span>}
+                                             <span className="text-sm font-medium text-stone-700 truncate">{s.name}</span>
+                                             {hasProgress && <span className="bg-coral-100 text-violet-700 text-[10px] px-1.5 py-0.5 rounded-full flex items-center gap-1"><TrendingUp className="w-3 h-3"/> Updated</span>}
                                         </div>
                                         <div className="flex items-center gap-2">
                                             <select 
@@ -664,7 +664,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
                                             <button 
                                                 type="button" 
                                                 onClick={() => openProgressModal(id)}
-                                                className={`p-1.5 rounded transition-colors border ${hasProgress ? 'bg-violet-50 text-violet-600 border-violet-200' : 'text-slate-400 border-transparent hover:bg-slate-100'}`}
+                                                className={`p-1.5 rounded transition-colors border ${hasProgress ? 'bg-coral-50 text-coral-600 border-violet-200' : 'text-stone-400 border-transparent hover:bg-cream-soft'}`}
                                                 title="Edit Progress & Notes"
                                             >
                                                 <MoreVertical className="w-4 h-4" />
@@ -715,7 +715,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
                             type="button"
                             disabled={!topic || selectedStudents.length === 0 || isGeneratingPlan}
                             onClick={handleGeneratePlan}
-                            className="absolute bottom-2 right-2 text-xs flex items-center gap-1 bg-violet-100 text-violet-700 px-2 py-1 rounded-md hover:bg-violet-200 disabled:opacity-50"
+                            className="absolute bottom-2 right-2 text-xs flex items-center gap-1 bg-coral-100 text-violet-700 px-2 py-1 rounded-md hover:bg-violet-200 disabled:opacity-50"
                         >
                             <Sparkles className="w-3 h-3" />
                             {isGeneratingPlan ? 'Generating...' : 'AI Plan'}
@@ -723,7 +723,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
                     </div>
 
                     {generatedPlan && (
-                        <div className="bg-violet-50 p-3 rounded-md text-xs text-slate-700 max-h-40 overflow-y-auto whitespace-pre-wrap border border-violet-100">
+                        <div className="bg-coral-50 p-3 rounded-md text-xs text-stone-700 max-h-40 overflow-y-auto whitespace-pre-wrap border border-violet-100">
                             <h4 className="font-semibold text-violet-800 mb-1">Generated Plan Preview:</h4>
                             {generatedPlan}
                         </div>
@@ -745,13 +745,13 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
                             <button 
                                 type="button" 
                                 onClick={() => setIsModalOpen(false)}
-                                className="px-4 py-2 text-slate-600 hover:bg-slate-50 rounded-md"
+                                className="px-4 py-2 text-stone-600 hover:bg-cream rounded-md"
                             >
                                 Cancel
                             </button>
                             <button 
                                 type="submit"
-                                className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
+                                className="px-4 py-2 bg-coral-600 text-white rounded-md hover:bg-coral-700"
                             >
                                 {editingSessionId ? 'Update Session' : 'Save Session'}
                             </button>
@@ -762,7 +762,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
                 {/* Nested Modal for Progress Editing */}
                 {progressModalOpen && currentProgressStudentId && (
                      <div className="absolute inset-0 z-[60] bg-white rounded-xl flex flex-col animate-in slide-in-from-bottom-2">
-                        <div className="flex justify-between items-center p-4 border-b border-slate-100 bg-violet-50 rounded-t-xl">
+                        <div className="flex justify-between items-center p-4 border-b border-cream-border bg-coral-50 rounded-t-xl">
                             <h3 className="font-bold text-violet-900 flex items-center gap-2">
                                 <TrendingUp className="w-4 h-4" /> 
                                 Progress: {students.find(s => s.id === currentProgressStudentId)?.name}
@@ -783,7 +783,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
                                         { label: 'Reading', key: 'reading', color: 'bg-blue-100 text-blue-700' },
                                         { label: 'Writing', key: 'writing', color: 'bg-emerald-100 text-emerald-700' },
                                         { label: 'Listening', key: 'listening', color: 'bg-amber-100 text-amber-700' },
-                                        { label: 'Speaking', key: 'speaking', color: 'bg-violet-100 text-violet-700' },
+                                        { label: 'Speaking', key: 'speaking', color: 'bg-coral-100 text-violet-700' },
                                     ].map((field) => {
                                         const previousScore = latest ? latest[field.key as keyof SkillProgress] : null;
                                         return (
@@ -793,7 +793,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
                                                         {field.label}
                                                     </label>
                                                     {previousScore !== null && (
-                                                        <span className="text-[10px] text-slate-400 font-medium bg-slate-100 px-1.5 py-0.5 rounded">
+                                                        <span className="text-[10px] text-stone-400 font-medium bg-cream-soft px-1.5 py-0.5 rounded">
                                                             Prev: {previousScore}
                                                         </span>
                                                     )}
@@ -803,7 +803,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
                                                     min="0" max="100"
                                                     value={tempProgress[currentProgressStudentId]?.[field.key as keyof SkillProgress] || 0}
                                                     onChange={e => updateTempProgress(field.key as keyof SkillProgress, parseInt(e.target.value) || 0)}
-                                                    className="w-full p-2 rounded-md border text-sm text-center font-semibold focus:ring-2 focus:ring-indigo-500 outline-none"
+                                                    className="w-full p-2 rounded-md border text-sm text-center font-semibold focus:ring-2 focus:ring-coral-500 outline-none"
                                                 />
                                             </div>
                                         );
@@ -811,21 +811,21 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
                                 })()}
                             </div>
                             <div>
-                                <label className="block text-xs font-medium text-slate-500 mb-1">Student-Specific Note</label>
+                                <label className="block text-xs font-medium text-stone-500 mb-1">Student-Specific Note</label>
                                 <textarea 
                                     value={tempProgress[currentProgressStudentId]?.notes || ''}
                                     onChange={e => updateTempProgress('notes', e.target.value)}
                                     placeholder="Specific achievements or struggles today..."
-                                    className="w-full p-2 rounded-md border text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                                    className="w-full p-2 rounded-md border text-sm focus:ring-2 focus:ring-coral-500 outline-none"
                                     rows={3}
                                 />
                             </div>
                         </div>
-                        <div className="p-4 border-t border-slate-100 flex justify-end">
+                        <div className="p-4 border-t border-cream-border flex justify-end">
                              <button 
                                 type="button" 
                                 onClick={() => setProgressModalOpen(false)}
-                                className="px-4 py-2 bg-violet-600 text-white rounded-md hover:bg-violet-700 text-sm font-medium"
+                                className="px-4 py-2 bg-coral-600 text-white rounded-md hover:bg-violet-700 text-sm font-medium"
                             >
                                 Done
                             </button>

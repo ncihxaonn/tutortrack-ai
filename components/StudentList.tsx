@@ -113,16 +113,16 @@ const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpd
     <div className="space-y-6">
       {/* Header Actions */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div className="flex items-center bg-slate-100 rounded-lg p-1">
+        <div className="flex items-center bg-cream-soft rounded-lg p-1">
             <button 
                 onClick={() => setViewStatus('Active')}
-                className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${viewStatus === 'Active' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${viewStatus === 'Active' ? 'bg-white text-stone-800 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
             >
                 Active
             </button>
             <button 
                 onClick={() => setViewStatus('Archived')}
-                className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${viewStatus === 'Archived' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${viewStatus === 'Archived' ? 'bg-white text-stone-800 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
             >
                 Archived
             </button>
@@ -130,19 +130,19 @@ const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpd
 
         <div className="flex gap-2 w-full sm:w-auto">
              <div className="relative flex-1 sm:w-64">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 w-4 h-4" />
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-stone-400 w-4 h-4" />
                 <input
                     type="text"
                     placeholder="Search..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm"
+                    className="w-full pl-10 pr-4 py-2 bg-white border border-cream-border rounded-lg focus:outline-none focus:ring-2 focus:ring-coral-500 focus:border-transparent text-sm"
                 />
             </div>
             {viewStatus === 'Active' && (
                 <button
                 onClick={() => setIsAdding(true)}
-                className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors whitespace-nowrap"
+                className="flex items-center gap-2 bg-coral-600 hover:bg-coral-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors whitespace-nowrap"
                 >
                 <Plus className="w-4 h-4" />
                 Add Student
@@ -153,7 +153,7 @@ const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpd
 
       {/* Add Student Form */}
       {isAdding && (
-        <div className="bg-white p-6 rounded-xl border border-indigo-100 shadow-sm animate-in fade-in slide-in-from-top-4">
+        <div className="bg-white p-6 rounded-xl border border-coral-100 shadow-sm animate-in fade-in slide-in-from-top-4">
           <h3 className="font-semibold text-lg mb-4">New Student Registration</h3>
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -172,21 +172,21 @@ const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpd
                 />
             </div>
             
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 bg-slate-50 rounded-xl border border-slate-100">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 bg-cream rounded-2xl border border-cream-border">
                 {/* One on One Column */}
                 <div className={`space-y-3 transition-opacity ${oneOnOneEnabled ? 'opacity-100' : 'opacity-70'}`}>
-                     <label className="flex items-center gap-2 font-semibold text-slate-800 cursor-pointer">
+                     <label className="flex items-center gap-2 font-semibold text-stone-800 cursor-pointer">
                         <input 
                             type="checkbox" 
                             checked={oneOnOneEnabled}
                             onChange={(e) => setOneOnOneEnabled(e.target.checked)}
-                            className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500"
+                            className="w-4 h-4 text-coral-600 rounded focus:ring-coral-500"
                         />
                         One-on-One Program
                     </label>
                     <div className="pl-6 space-y-3">
                         <div>
-                            <label className="block text-xs font-medium text-slate-500 mb-1">Number of Sessions</label>
+                            <label className="block text-xs font-medium text-stone-500 mb-1">Number of Sessions</label>
                             <input
                                 type="number"
                                 min="0"
@@ -198,7 +198,7 @@ const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpd
                             />
                         </div>
                         <div>
-                            <label className="block text-xs font-medium text-slate-500 mb-1">Amount Paid ($)</label>
+                            <label className="block text-xs font-medium text-stone-500 mb-1">Amount Paid ($)</label>
                             <input
                                 type="number"
                                 min="0"
@@ -214,18 +214,18 @@ const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpd
 
                  {/* Group Column */}
                  <div className={`space-y-3 transition-opacity ${groupEnabled ? 'opacity-100' : 'opacity-70'}`}>
-                     <label className="flex items-center gap-2 font-semibold text-slate-800 cursor-pointer">
+                     <label className="flex items-center gap-2 font-semibold text-stone-800 cursor-pointer">
                         <input 
                             type="checkbox" 
                             checked={groupEnabled}
                             onChange={(e) => setGroupEnabled(e.target.checked)}
-                            className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500"
+                            className="w-4 h-4 text-coral-600 rounded focus:ring-coral-500"
                         />
                         One-on-Two (Group) Program
                     </label>
                     <div className="pl-6 space-y-3">
                         <div>
-                            <label className="block text-xs font-medium text-slate-500 mb-1">Number of Sessions</label>
+                            <label className="block text-xs font-medium text-stone-500 mb-1">Number of Sessions</label>
                             <input
                                 type="number"
                                 min="0"
@@ -237,7 +237,7 @@ const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpd
                             />
                         </div>
                         <div>
-                            <label className="block text-xs font-medium text-slate-500 mb-1">Amount Paid ($)</label>
+                            <label className="block text-xs font-medium text-stone-500 mb-1">Amount Paid ($)</label>
                             <input
                                 type="number"
                                 min="0"
@@ -264,13 +264,13 @@ const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpd
               <button 
                 type="button" 
                 onClick={() => { setIsAdding(false); resetForm(); }}
-                className="px-4 py-2 text-slate-600 hover:bg-slate-50 rounded-md"
+                className="px-4 py-2 text-stone-600 hover:bg-cream rounded-md"
               >
                 Cancel
               </button>
               <button 
                 type="submit"
-                className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
+                className="px-4 py-2 bg-coral-600 text-white rounded-md hover:bg-coral-700"
               >
                 Create Student
               </button>
@@ -282,19 +282,19 @@ const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpd
       {/* Student Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {filteredStudents.length === 0 && (
-            <div className="col-span-full text-center py-10 text-slate-400">
+            <div className="col-span-full text-center py-10 text-stone-400">
                 No {viewStatus.toLowerCase()} students found.
             </div>
         )}
         {filteredStudents.map(student => (
           <div 
             key={student.id} 
-            className="group bg-white p-5 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-200 transition-all flex flex-col justify-between h-full"
+            className="group bg-white p-5 rounded-2xl border border-cream-border shadow-sm hover:shadow-md hover:border-coral-200 transition-all flex flex-col justify-between h-full"
           >
             <div className="cursor-pointer" onClick={() => onSelectStudent(student)}>
                 <div className="flex justify-between items-start mb-3">
-                    <div className="p-2 bg-slate-100 rounded-full group-hover:bg-indigo-50 transition-colors">
-                        <User className="w-5 h-5 text-slate-600 group-hover:text-indigo-600" />
+                    <div className="p-2 bg-cream-soft rounded-full group-hover:bg-coral-50 transition-colors">
+                        <User className="w-5 h-5 text-stone-600 group-hover:text-coral-600" />
                     </div>
                     <div className="flex flex-wrap gap-1 justify-end max-w-[60%]">
                         {student.classTypes.map(type => (
@@ -304,12 +304,12 @@ const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpd
                         ))}
                     </div>
                 </div>
-                <h3 className="font-semibold text-slate-800">{student.name}</h3>
-                <p className="text-sm text-slate-500 mb-1">{student.parentName || 'No parent listed'}</p>
+                <h3 className="font-semibold text-stone-800">{student.name}</h3>
+                <p className="text-sm text-stone-500 mb-1">{student.parentName || 'No parent listed'}</p>
                 {student.packages && student.packages.length > 0 ? (
                     <div className="flex flex-col gap-1 mb-4">
                         {student.packages.map((pkg, idx) => (
-                             <p key={idx} className="text-xs text-slate-400">
+                             <p key={idx} className="text-xs text-stone-400">
                                 {pkg.type === ClassType.OneOnOne ? '1-on-1' : 'Group'}: {pkg.total} classes
                              </p>
                         ))}
@@ -321,7 +321,7 @@ const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpd
             
             <div className="pt-4 border-t border-slate-50 flex items-end justify-between">
               <div className="text-xs">
-                <p className="text-slate-400">Balance</p>
+                <p className="text-stone-400">Balance</p>
                 <p className={`font-medium ${student.balance > 0 ? 'text-red-500' : 'text-emerald-600'}`}>
                   {student.balance > 0 ? `Owes $${student.balance}` : student.balance < 0 ? `Credit $${Math.abs(student.balance)}` : 'Settled'}
                 </p>
@@ -331,7 +331,7 @@ const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpd
                  {student.status === 'Active' ? (
                      <button 
                         onClick={(e) => { e.stopPropagation(); onUpdateStudent({...student, status: 'Archived'}); }}
-                        className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded transition-colors"
+                        className="p-1.5 text-stone-400 hover:text-amber-600 hover:bg-amber-50 rounded transition-colors"
                         title="Archive"
                      >
                         <Archive className="w-4 h-4" />
@@ -340,14 +340,14 @@ const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpd
                     <>
                      <button 
                         onClick={(e) => { e.stopPropagation(); onUpdateStudent({...student, status: 'Active'}); }}
-                        className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded transition-colors"
+                        className="p-1.5 text-stone-400 hover:text-emerald-600 hover:bg-emerald-50 rounded transition-colors"
                         title="Restore"
                     >
                         <RotateCcw className="w-4 h-4" />
                     </button>
                      <button 
                         onClick={(e) => handleDeleteClick(e, student)}
-                        className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                        className="p-1.5 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
                         title="Delete Permanently"
                      >
                         <Trash2 className="w-4 h-4" />
@@ -368,14 +368,14 @@ const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpd
                       <div className="bg-red-100 p-3 rounded-full mb-4">
                           <AlertTriangle className="w-6 h-6 text-red-600" />
                       </div>
-                      <h3 className="text-lg font-bold text-slate-800 mb-2">Delete Student?</h3>
-                      <p className="text-slate-500 text-sm mb-6">
+                      <h3 className="text-lg font-serif font-semibold tracking-tight text-stone-800 mb-2">Delete Student?</h3>
+                      <p className="text-stone-500 text-sm mb-6">
                           Are you sure you want to permanently delete <strong>{studentToDelete.name}</strong>? This action cannot be undone and all data will be lost.
                       </p>
                       <div className="flex gap-3 w-full">
                           <button 
                               onClick={() => setStudentToDelete(null)}
-                              className="flex-1 px-4 py-2 border border-slate-200 rounded-lg text-slate-600 font-medium hover:bg-slate-50"
+                              className="flex-1 px-4 py-2 border border-cream-border rounded-lg text-stone-600 font-medium hover:bg-cream"
                           >
                               Cancel
                           </button>
