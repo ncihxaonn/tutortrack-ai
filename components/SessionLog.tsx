@@ -34,6 +34,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
   const [topic, setTopic] = useState('');
   const [sessionType, setSessionType] = useState<ClassType>(ClassType.OneOnOne);
   const [notes, setNotes] = useState('');
+  const [isTrial, setIsTrial] = useState(false);
   
   // Progress Editing State
   const [progressModalOpen, setProgressModalOpen] = useState(false);
@@ -136,6 +137,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
     setTopic(session.topic);
     setSessionType(session.type);
     setNotes(session.notes);
+    setIsTrial(!!session.isTrial);
     setGeneratedPlan('');
     setTempProgress({});
     setIsModalOpen(true);
@@ -215,7 +217,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
     if (selectedStudents.length === 0) return;
 
     const pricePerStudent = sessionType === ClassType.OneOnOne ? PRICE_1ON1 : PRICE_GROUP;
-    const totalPrice = pricePerStudent * selectedStudents.length;
+    const totalPrice = isTrial ? 0 : pricePerStudent * selectedStudents.length;
 
     const studentStatusesArray: StudentSessionStatus[] = selectedStudents.map(id => ({
         studentId: id,
@@ -233,7 +235,8 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
       type: sessionType,
       topic,
       notes: generatedPlan ? `${notes}\n\n--- AI Plan ---\n${generatedPlan}` : notes,
-      price: totalPrice
+      price: totalPrice,
+      isTrial
     };
 
     if (editingSessionId) {
@@ -298,6 +301,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
     setIsStudentDropdownOpen(false);
     setTempProgress({});
     setCurrentProgressStudentId(null);
+    setIsTrial(false);
   };
 
   // --- Renderers ---
@@ -338,16 +342,21 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
                         </div>
                         <div className="space-y-1">
                             {daySessions.map(session => (
-                                <div 
+                                <div
                                     key={session.id}
                                     onClick={(e) => { e.stopPropagation(); openEditModal(session); }}
                                     className={`text-[10px] p-1.5 rounded border border-l-2 shadow-sm cursor-pointer hover:opacity-80 transition-opacity ${
-                                        session.type === ClassType.OneOnOne 
-                                        ? 'bg-blue-50 border-blue-100 border-l-blue-500 text-blue-700' 
+                                        session.isTrial
+                                        ? 'bg-amber-50 border-amber-100 border-l-amber-500 text-amber-800'
+                                        : session.type === ClassType.OneOnOne
+                                        ? 'bg-blue-50 border-blue-100 border-l-blue-500 text-blue-700'
                                         : 'bg-orange-50 border-orange-100 border-l-orange-500 text-orange-700'
                                     }`}
                                 >
-                                    <div className="font-semibold truncate">{session.topic}</div>
+                                    <div className="font-semibold truncate flex items-center gap-1">
+                                        {session.isTrial && <span className="text-[8px] uppercase font-bold bg-amber-200 text-amber-900 px-1 rounded">Trial</span>}
+                                        <span className="truncate">{session.topic}</span>
+                                    </div>
                                     <div className="text-xs opacity-75">
                                         {new Date(session.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
                                     </div>
@@ -392,12 +401,14 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
                           </div>
                           <div className="flex-1 p-2 space-y-2 overflow-y-auto hover:bg-cream transition-colors cursor-pointer">
                               {daySessions.map(session => (
-                                  <div 
+                                  <div
                                     key={session.id}
                                     onClick={(e) => { e.stopPropagation(); openEditModal(session); }}
                                     className={`p-2 rounded border-l-4 shadow-sm cursor-pointer hover:shadow-md transition-all ${
-                                        session.type === ClassType.OneOnOne 
-                                        ? 'bg-blue-50 border-blue-500 text-blue-800' 
+                                        session.isTrial
+                                        ? 'bg-amber-50 border-amber-500 text-amber-800'
+                                        : session.type === ClassType.OneOnOne
+                                        ? 'bg-blue-50 border-blue-500 text-blue-800'
                                         : 'bg-orange-50 border-orange-500 text-orange-800'
                                     }`}
                                   >
@@ -405,6 +416,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
                                           <span className="text-xs font-bold opacity-75">
                                               {new Date(session.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
                                           </span>
+                                          {session.isTrial && <span className="text-[8px] uppercase font-bold bg-amber-200 text-amber-900 px-1 rounded">Trial</span>}
                                       </div>
                                       <div className="font-semibold text-xs mb-1 line-clamp-2">{session.topic}</div>
                                       <div className="flex -space-x-1 overflow-hidden pt-1">
@@ -574,6 +586,19 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
                                 <option value={ClassType.Group}>One-on-Two (Group)</option>
                             </select>
                         </div>
+
+                        <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${isTrial ? 'bg-amber-50 border-amber-300' : 'bg-cream border-cream-border hover:bg-cream-soft'}`}>
+                            <input
+                                type="checkbox"
+                                checked={isTrial}
+                                onChange={e => setIsTrial(e.target.checked)}
+                                className="mt-0.5 w-4 h-4 accent-amber-600"
+                            />
+                            <div className="flex-1">
+                                <div className="text-sm font-medium text-stone-800">Trial lesson (free)</div>
+                                <div className="text-xs text-stone-500 mt-0.5">Doesn't affect student balance or revenue. Use for first-time trial classes.</div>
+                            </div>
+                        </label>
                         
                         {/* Student Dropdown Selector */}
                         <div className="relative">

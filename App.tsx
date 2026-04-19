@@ -70,6 +70,7 @@ const App: React.FC = () => {
   };
 
   const applyBalanceChanges = async (session: Session, action: 'add' | 'remove') => {
+    if (session.isTrial) return;
     const multiplier = action === 'add' ? 1 : -1;
     const updates: Student[] = [];
     const nextStudents = students.map(student => {

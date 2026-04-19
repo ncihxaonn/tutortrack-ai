@@ -23,9 +23,11 @@ const Dashboard: React.FC<DashboardProps> = ({ students, sessions, payments, onU
   // 1. Total Revenue
   const totalRevenue = payments.reduce((sum, p) => sum + p.amount, 0);
 
-  // 2. Attendance Rate
-  const totalSessions = sessions.length;
-  const attendedSessions = sessions.filter(s => s.status === AttendanceStatus.Present).length;
+  // 2. Attendance Rate (paid sessions only)
+  const paidSessions = sessions.filter(s => !s.isTrial);
+  const trialCount = sessions.length - paidSessions.length;
+  const totalSessions = paidSessions.length;
+  const attendedSessions = paidSessions.filter(s => s.status === AttendanceStatus.Present).length;
   const attendanceRate = totalSessions > 0 ? Math.round((attendedSessions / totalSessions) * 100) : 0;
 
   // 3. Active Students
@@ -55,7 +57,6 @@ const Dashboard: React.FC<DashboardProps> = ({ students, sessions, payments, onU
 
   // B. Weekly Session Activity (Bar Chart)
   const sessionActivityData = React.useMemo(() => {
-    // Get last 7 days dates
     const days = [];
     for (let i = 6; i >= 0; i--) {
         const d = new Date();
@@ -65,20 +66,21 @@ const Dashboard: React.FC<DashboardProps> = ({ students, sessions, payments, onU
 
     return days.map(day => {
         const dateStr = day.toISOString().split('T')[0];
-        const count = sessions.filter(s => s.date.startsWith(dateStr)).length;
+        const daySessions = sessions.filter(s => s.date.startsWith(dateStr));
         return {
-            name: day.toLocaleDateString('en-US', { weekday: 'short' }), // "Mon"
+            name: day.toLocaleDateString('en-US', { weekday: 'short' }),
             fullDate: dateStr,
-            count
+            count: daySessions.filter(s => !s.isTrial).length,
+            trials: daySessions.filter(s => s.isTrial).length
         };
     });
   }, [sessions]);
 
-  // C. Attendance Breakdown (Pie Chart)
+  // C. Attendance Breakdown (Pie Chart) — paid sessions only
   const attendanceData = React.useMemo(() => {
-    const present = sessions.filter(s => s.status === AttendanceStatus.Present).length;
-    const late = sessions.filter(s => s.status === AttendanceStatus.Late).length;
-    const absent = sessions.filter(s => s.status === AttendanceStatus.Absent || s.status === AttendanceStatus.Cancelled).length;
+    const present = paidSessions.filter(s => s.status === AttendanceStatus.Present).length;
+    const late = paidSessions.filter(s => s.status === AttendanceStatus.Late).length;
+    const absent = paidSessions.filter(s => s.status === AttendanceStatus.Absent || s.status === AttendanceStatus.Cancelled).length;
     
     const data = [
         { name: 'Present', value: present, color: '#10b981' }, // Emerald
@@ -86,7 +88,7 @@ const Dashboard: React.FC<DashboardProps> = ({ students, sessions, payments, onU
         { name: 'Absent', value: absent, color: '#ef4444' }  // Red
     ];
     return data.filter(d => d.value > 0);
-  }, [sessions]);
+  }, [paidSessions]);
 
 
   const StatCard = ({ title, value, sub, icon: Icon, color, trend }: any) => (
@@ -130,12 +132,12 @@ const Dashboard: React.FC<DashboardProps> = ({ students, sessions, payments, onU
           icon={Users} 
           color="bg-blue-500" 
         />
-        <StatCard 
-          title="Attendance Rate" 
-          value={`${attendanceRate}%`} 
-          sub="Overall"
-          icon={CalendarCheck} 
-          color="bg-coral-500" 
+        <StatCard
+          title="Attendance Rate"
+          value={`${attendanceRate}%`}
+          sub={trialCount > 0 ? `${trialCount} trial${trialCount === 1 ? '' : 's'} (not counted)` : 'Paid sessions'}
+          icon={CalendarCheck}
+          color="bg-coral-500"
         />
         <StatCard 
           title="Outstanding" 

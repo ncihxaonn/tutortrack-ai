@@ -56,10 +56,11 @@ export interface Session {
   durationMinutes: number;
   status: AttendanceStatus; // General status for the session (summary)
   studentStatuses: StudentSessionStatus[]; // Individual status per student
-  type: ClassType; 
+  type: ClassType;
   topic: string;
   notes: string;
   price: number;
+  isTrial?: boolean;
 }
 
 export interface Payment {

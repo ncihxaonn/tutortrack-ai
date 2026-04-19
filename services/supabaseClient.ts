@@ -33,6 +33,7 @@ type SessionRow = {
   topic: string;
   notes: string;
   price: number;
+  is_trial: boolean;
 };
 
 type PaymentRow = {
@@ -81,7 +82,8 @@ const toSession = (r: SessionRow): Session => ({
   type: r.type as ClassType,
   topic: r.topic,
   notes: r.notes,
-  price: Number(r.price) || 0
+  price: Number(r.price) || 0,
+  isTrial: r.is_trial || false
 });
 
 const fromSession = (s: Session) => ({
@@ -94,7 +96,8 @@ const fromSession = (s: Session) => ({
   type: s.type,
   topic: s.topic,
   notes: s.notes,
-  price: s.price
+  price: s.price,
+  is_trial: !!s.isTrial
 });
 
 const toPayment = (r: PaymentRow): Payment => ({
