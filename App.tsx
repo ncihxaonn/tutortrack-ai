@@ -205,12 +205,6 @@ const App: React.FC = () => {
             );
           })}
         </nav>
-        <div className="p-4 border-t border-cream-border">
-          <div className="bg-coral-600 rounded-xl p-4 text-white">
-            <p className="text-xs font-medium text-coral-100 mb-1">Pro Tip</p>
-            <p className="text-sm leading-snug">Use the AI Assistant in Calendar to plan your next class instantly!</p>
-          </div>
-        </div>
       </aside>
 
       <div className="md:hidden fixed top-0 left-0 right-0 bg-white border-b border-cream-border z-20 px-4 py-3 flex justify-between items-center shadow-sm">
