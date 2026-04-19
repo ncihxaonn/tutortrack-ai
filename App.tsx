@@ -11,7 +11,9 @@ import {
   deleteStudent as dbDeleteStudent,
   upsertSession as dbUpsertSession,
   deleteSession as dbDeleteSession,
-  insertPayment as dbInsertPayment
+  insertPayment as dbInsertPayment,
+  updatePayment as dbUpdatePayment,
+  deletePayment as dbDeletePayment
 } from './services/supabaseClient';
 
 const App: React.FC = () => {
@@ -22,7 +24,6 @@ const App: React.FC = () => {
   const [students, setStudents] = useState<Student[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
-  const [financialOffset, setFinancialOffset] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -128,6 +129,45 @@ const App: React.FC = () => {
     if (selectedStudent?.id === studentId) setSelectedStudent(updatedStudent);
   };
 
+  const handleUpdatePayment = async (updated: Payment) => {
+    const original = payments.find(p => p.id === updated.id);
+    if (!original) return;
+    await dbUpdatePayment(updated);
+    setPayments(prev => prev.map(p => p.id === updated.id ? updated : p));
+    if (original.amount !== updated.amount || original.studentId !== updated.studentId) {
+      const delta = updated.amount - original.amount;
+      const nextStudents = students.map(s => {
+        if (s.id === original.studentId && s.id === updated.studentId) {
+          return { ...s, balance: s.balance - delta };
+        }
+        if (s.id === original.studentId) return { ...s, balance: s.balance + original.amount };
+        if (s.id === updated.studentId) return { ...s, balance: s.balance - updated.amount };
+        return s;
+      });
+      const changed = nextStudents.filter((s, i) => s !== students[i]);
+      setStudents(nextStudents);
+      await Promise.all(changed.map(dbUpsertStudent));
+      if (selectedStudent) {
+        const refreshed = nextStudents.find(s => s.id === selectedStudent.id);
+        if (refreshed) setSelectedStudent(refreshed);
+      }
+    }
+  };
+
+  const handleDeletePayment = async (id: string) => {
+    const payment = payments.find(p => p.id === id);
+    if (!payment) return;
+    await dbDeletePayment(id);
+    setPayments(prev => prev.filter(p => p.id !== id));
+    const target = students.find(s => s.id === payment.studentId);
+    if (target) {
+      const restored = { ...target, balance: target.balance + payment.amount };
+      await dbUpsertStudent(restored);
+      setStudents(prev => prev.map(s => s.id === restored.id ? restored : s));
+      if (selectedStudent?.id === restored.id) setSelectedStudent(restored);
+    }
+  };
+
   if (loading) {
     return <div className="flex items-center justify-center min-h-screen text-stone-500">Loading…</div>;
   }
@@ -222,8 +262,8 @@ const App: React.FC = () => {
             students={students}
             sessions={sessions}
             payments={payments}
-            financialOffset={financialOffset}
-            onUpdateOffset={setFinancialOffset}
+            onUpdatePayment={handleUpdatePayment}
+            onDeletePayment={handleDeletePayment}
           />
         )}
 

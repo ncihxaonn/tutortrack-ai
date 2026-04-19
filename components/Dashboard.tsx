@@ -1,35 +1,27 @@
 import React, { useState } from 'react';
-import { 
+import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Cell,
   LineChart, Line, PieChart, Pie, Legend, AreaChart, Area
 } from 'recharts';
-import { Users, DollarSign, CalendarCheck, TrendingUp, Settings, Save, ArrowUpRight, Activity, Calendar } from 'lucide-react';
+import { Users, DollarSign, CalendarCheck, TrendingUp, Activity, Calendar, Pencil, Trash2, AlertTriangle } from 'lucide-react';
 import { Student, Session, Payment, AttendanceStatus } from '../types';
 
 interface DashboardProps {
   students: Student[];
   sessions: Session[];
   payments: Payment[];
-  financialOffset: number;
-  onUpdateOffset: (amount: number) => void;
+  onUpdatePayment: (p: Payment) => void;
+  onDeletePayment: (id: string) => void;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ students, sessions, payments, financialOffset, onUpdateOffset }) => {
-  const [showSettings, setShowSettings] = useState(false);
-  const [tempOffset, setTempOffset] = useState(financialOffset.toString());
-
-  const handleSaveOffset = () => {
-      const val = parseFloat(tempOffset);
-      if (!isNaN(val)) {
-          onUpdateOffset(val);
-      }
-      setShowSettings(false);
-  };
+const Dashboard: React.FC<DashboardProps> = ({ students, sessions, payments, onUpdatePayment, onDeletePayment }) => {
+  const [editingPayment, setEditingPayment] = useState<Payment | null>(null);
+  const [paymentToDelete, setPaymentToDelete] = useState<Payment | null>(null);
 
   // --- Calculations ---
 
   // 1. Total Revenue
-  const totalRevenue = payments.reduce((sum, p) => sum + p.amount, 0) + financialOffset;
+  const totalRevenue = payments.reduce((sum, p) => sum + p.amount, 0);
 
   // 2. Attendance Rate
   const totalSessions = sessions.length;
@@ -119,45 +111,7 @@ const Dashboard: React.FC<DashboardProps> = ({ students, sessions, payments, fin
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       
-      {/* Settings Toggle */}
-      <div className="flex justify-between items-center">
-          <h2 className="font-serif text-xl font-semibold text-stone-900">Business Overview</h2>
-          <button 
-            onClick={() => { setShowSettings(!showSettings); setTempOffset(financialOffset.toString()); }}
-            className="flex items-center gap-2 text-xs text-stone-500 hover:text-coral-600 transition-colors bg-white px-3 py-1.5 rounded-lg border border-cream-border shadow-sm"
-          >
-              <Settings className="w-3 h-3" />
-              Settings
-          </button>
-      </div>
-
-      {showSettings && (
-          <div className="bg-white p-6 rounded-xl border border-coral-100 shadow-sm animate-in slide-in-from-top-2">
-              <h3 className="font-semibold text-stone-800 mb-4 flex items-center gap-2">
-                  <Settings className="w-5 h-5 text-coral-600" />
-                  Data Configuration
-              </h3>
-              <div className="max-w-md">
-                  <label className="block text-sm font-medium text-stone-600 mb-2">Historical Revenue Offset ($)</label>
-                  <div className="flex gap-2">
-                      <input 
-                          type="number" 
-                          value={tempOffset}
-                          onChange={(e) => setTempOffset(e.target.value)}
-                          className="w-full px-4 py-2 border border-cream-border rounded-lg focus:outline-none focus:ring-2 focus:ring-coral-500 text-sm"
-                          placeholder="0.00"
-                      />
-                      <button 
-                        onClick={handleSaveOffset}
-                        className="bg-coral-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-coral-700 flex items-center gap-2 transition-colors"
-                      >
-                          <Save className="w-4 h-4" />
-                          Save
-                      </button>
-                  </div>
-              </div>
-          </div>
-      )}
+      <h2 className="font-serif text-xl font-semibold text-stone-900">Business Overview</h2>
 
       {/* Top Stats Row */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -317,27 +271,166 @@ const Dashboard: React.FC<DashboardProps> = ({ students, sessions, payments, fin
            {/* Recent Payments List */}
            <div className="bg-white p-6 rounded-2xl border border-cream-border h-80 overflow-hidden flex flex-col">
                 <h3 className="font-serif text-lg font-semibold text-stone-900 mb-4">Recent Payments</h3>
-                <div className="flex-1 overflow-y-auto pr-2 space-y-3 custom-scrollbar">
+                <div className="flex-1 overflow-y-auto pr-2 space-y-2 custom-scrollbar">
                     {payments.length === 0 && <p className="text-sm text-stone-400 text-center py-10">No payments recorded.</p>}
-                    {[...payments].sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 10).map(payment => {
+                    {[...payments].sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(payment => {
                         const student = students.find(s => s.id === payment.studentId);
                         return (
-                            <div key={payment.id} className="flex justify-between items-center p-3 bg-cream rounded-lg border border-cream-border">
-                                <div>
-                                    <p className="text-sm font-semibold text-stone-700">{student?.name || 'Unknown'}</p>
-                                    <p className="text-xs text-stone-400">{new Date(payment.date).toLocaleDateString()}</p>
+                            <div key={payment.id} className="group flex justify-between items-center p-3 bg-cream rounded-lg border border-cream-border hover:border-coral-200 transition-colors">
+                                <div className="min-w-0">
+                                    <p className="text-sm font-semibold text-stone-800 truncate">{student?.name || 'Unknown'}</p>
+                                    <p className="text-xs text-stone-500">{new Date(payment.date).toLocaleDateString()} · {payment.method}</p>
                                 </div>
-                                <span className="font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded text-sm">
-                                    +${payment.amount}
-                                </span>
+                                <div className="flex items-center gap-2 shrink-0">
+                                    <span className="font-semibold text-emerald-700 bg-emerald-50 px-2 py-1 rounded text-sm">
+                                        +${payment.amount}
+                                    </span>
+                                    <button
+                                        onClick={() => setEditingPayment(payment)}
+                                        title="Edit payment"
+                                        className="p-1.5 text-stone-400 hover:text-coral-600 hover:bg-coral-50 rounded-md transition-colors"
+                                    >
+                                        <Pencil className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                        onClick={() => setPaymentToDelete(payment)}
+                                        title="Delete payment"
+                                        className="p-1.5 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                                    >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                </div>
                             </div>
                         );
                     })}
                 </div>
            </div>
       </div>
+
+      {/* Edit Payment Modal */}
+      {editingPayment && (
+          <EditPaymentModal
+              payment={editingPayment}
+              students={students}
+              onClose={() => setEditingPayment(null)}
+              onSave={(p) => { onUpdatePayment(p); setEditingPayment(null); }}
+          />
+      )}
+
+      {/* Delete Payment Confirmation */}
+      {paymentToDelete && (
+          <div className="fixed inset-0 bg-stone-900/40 flex items-center justify-center z-50 p-4" onClick={() => setPaymentToDelete(null)}>
+              <div className="bg-white rounded-2xl max-w-md w-full p-6 border border-cream-border" onClick={e => e.stopPropagation()}>
+                  <div className="flex items-start gap-3 mb-4">
+                      <div className="p-2 bg-red-50 rounded-lg">
+                          <AlertTriangle className="w-5 h-5 text-red-600" />
+                      </div>
+                      <div>
+                          <h3 className="font-serif text-lg font-semibold tracking-tight text-stone-900">Delete this payment?</h3>
+                          <p className="text-sm text-stone-600 mt-1">
+                              Removing ${paymentToDelete.amount} from {students.find(s => s.id === paymentToDelete.studentId)?.name || 'this student'}. Their balance will be restored by the same amount. This can't be undone.
+                          </p>
+                      </div>
+                  </div>
+                  <div className="flex justify-end gap-2">
+                      <button
+                          onClick={() => setPaymentToDelete(null)}
+                          className="px-4 py-2 text-sm font-medium text-stone-700 bg-cream hover:bg-cream-soft rounded-lg transition-colors"
+                      >
+                          Cancel
+                      </button>
+                      <button
+                          onClick={() => { onDeletePayment(paymentToDelete.id); setPaymentToDelete(null); }}
+                          className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
+                      >
+                          Delete
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
     </div>
   );
+};
+
+interface EditPaymentModalProps {
+    payment: Payment;
+    students: Student[];
+    onClose: () => void;
+    onSave: (p: Payment) => void;
+}
+
+const EditPaymentModal: React.FC<EditPaymentModalProps> = ({ payment, students, onClose, onSave }) => {
+    const [amount, setAmount] = useState(payment.amount.toString());
+    const [date, setDate] = useState(payment.date.slice(0, 10));
+    const [method, setMethod] = useState(payment.method);
+    const [studentId, setStudentId] = useState(payment.studentId);
+
+    const handleSave = () => {
+        const parsed = parseFloat(amount);
+        if (isNaN(parsed) || parsed <= 0) return;
+        onSave({
+            ...payment,
+            amount: parsed,
+            date: new Date(date).toISOString(),
+            method: method.trim() || 'Manual',
+            studentId
+        });
+    };
+
+    return (
+        <div className="fixed inset-0 bg-stone-900/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
+            <div className="bg-white rounded-2xl max-w-md w-full p-6 border border-cream-border" onClick={e => e.stopPropagation()}>
+                <h3 className="font-serif text-lg font-semibold tracking-tight text-stone-900 mb-4">Edit Payment</h3>
+                <div className="space-y-4">
+                    <div>
+                        <label className="block text-sm font-medium text-stone-600 mb-1">Student</label>
+                        <select
+                            value={studentId}
+                            onChange={(e) => setStudentId(e.target.value)}
+                            className="w-full px-3 py-2 border border-cream-border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-coral-500 text-sm"
+                        >
+                            {students.map(s => (
+                                <option key={s.id} value={s.id}>{s.name}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-stone-600 mb-1">Amount ($)</label>
+                        <input
+                            type="number"
+                            value={amount}
+                            onChange={(e) => setAmount(e.target.value)}
+                            className="w-full px-3 py-2 border border-cream-border rounded-lg focus:outline-none focus:ring-2 focus:ring-coral-500 text-sm"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-stone-600 mb-1">Date</label>
+                        <input
+                            type="date"
+                            value={date}
+                            onChange={(e) => setDate(e.target.value)}
+                            className="w-full px-3 py-2 border border-cream-border rounded-lg focus:outline-none focus:ring-2 focus:ring-coral-500 text-sm"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-stone-600 mb-1">Method</label>
+                        <input
+                            type="text"
+                            value={method}
+                            onChange={(e) => setMethod(e.target.value)}
+                            placeholder="Cash, Bank Transfer, etc."
+                            className="w-full px-3 py-2 border border-cream-border rounded-lg focus:outline-none focus:ring-2 focus:ring-coral-500 text-sm"
+                        />
+                    </div>
+                </div>
+                <div className="flex justify-end gap-2 mt-6">
+                    <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-stone-700 bg-cream hover:bg-cream-soft rounded-lg transition-colors">Cancel</button>
+                    <button onClick={handleSave} className="px-4 py-2 text-sm font-medium text-white bg-coral-600 hover:bg-coral-700 rounded-lg transition-colors">Save</button>
+                </div>
+            </div>
+        </div>
+    );
 };
 
 export default Dashboard;

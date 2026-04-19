@@ -143,3 +143,9 @@ export const deleteSession = (id: string) =>
 
 export const insertPayment = (p: Payment) =>
   supabase.from('payments').insert(fromPayment(p)).then(r => { if (r.error) throw r.error; });
+
+export const updatePayment = (p: Payment) =>
+  supabase.from('payments').update(fromPayment(p)).eq('id', p.id).then(r => { if (r.error) throw r.error; });
+
+export const deletePayment = (id: string) =>
+  supabase.from('payments').delete().eq('id', id).then(r => { if (r.error) throw r.error; });

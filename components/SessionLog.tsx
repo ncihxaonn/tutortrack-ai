@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Session, Student, AttendanceStatus, ClassType, StudentSessionStatus, SkillProgress } from '../types';
-import { Calendar as CalendarIcon, Clock, CheckCircle, XCircle, AlertCircle, Sparkles, ChevronLeft, ChevronRight, X, Edit, Trash2, Search, ChevronDown, ChevronUp, MoreVertical, TrendingUp, LayoutGrid, List } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, CheckCircle, XCircle, AlertCircle, AlertTriangle, Sparkles, ChevronLeft, ChevronRight, X, Edit, Trash2, Search, ChevronDown, ChevronUp, MoreVertical, TrendingUp, LayoutGrid, List } from 'lucide-react';
 import { generateLessonPlan } from '../services/geminiService';
 import { PRICE_1ON1, PRICE_GROUP } from '../constants';
 
@@ -23,6 +23,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
 
   // Form State
   const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
@@ -272,8 +273,15 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
   };
 
   const handleDelete = () => {
-    if (editingSessionId && window.confirm("Delete this session?")) {
-        onDeleteSession(editingSessionId);
+    if (editingSessionId) {
+        setSessionToDelete(editingSessionId);
+    }
+  }
+
+  const confirmDeleteSession = () => {
+    if (sessionToDelete) {
+        onDeleteSession(sessionToDelete);
+        setSessionToDelete(null);
         setIsModalOpen(false);
     }
   }
@@ -835,6 +843,46 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
             </div>
         </div>
       )}
+
+      {sessionToDelete && (() => {
+        const s = sessions.find(ses => ses.id === sessionToDelete);
+        if (!s) return null;
+        const names = s.studentIds.map(id => students.find(st => st.id === id)?.name).filter(Boolean).join(', ');
+        return (
+          <div className="fixed inset-0 bg-stone-900/40 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-in zoom-in-95 duration-200">
+              <div className="flex items-start gap-4">
+                <div className="bg-red-50 rounded-full p-3">
+                  <AlertTriangle className="w-6 h-6 text-red-600" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="font-serif text-xl font-semibold text-stone-900 mb-2">Delete session?</h3>
+                  <p className="text-sm text-stone-600 leading-relaxed">
+                    Removing "{s.topic}" on {new Date(s.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                    {names ? ` with ${names}` : ''}. Any balance charged for attendance will be refunded. This can't be undone.
+                  </p>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 mt-6">
+                <button
+                  type="button"
+                  onClick={() => setSessionToDelete(null)}
+                  className="px-4 py-2 text-stone-600 hover:bg-cream rounded-lg text-sm font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmDeleteSession}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium"
+                >
+                  Delete session
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };
