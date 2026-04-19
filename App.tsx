@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { LayoutDashboard, Users, Calendar, Menu, X, BookOpen } from 'lucide-react';
+import { LayoutDashboard, Users, Calendar, Menu, X, BookOpen, Loader2 } from 'lucide-react';
 import Dashboard from './components/Dashboard';
 import StudentList from './components/StudentList';
 import SessionLog from './components/SessionLog';
 import StudentDetail from './components/StudentDetail';
 import { TabItem, Student, Session, Payment, AttendanceStatus } from './types';
+import { Currency, BASE_CURRENCY, fetchRate, CURRENCY_LABELS } from './lib/currency';
 import {
   fetchAll,
   upsertStudent as dbUpsertStudent,
@@ -27,6 +28,13 @@ const App: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  // Currency display: base is CNY; toggle to AUD using a live exchange rate.
+  const [currency, setCurrency] = useState<Currency>(BASE_CURRENCY);
+  const [rate, setRate] = useState<number>(1);
+  const [rateLoading, setRateLoading] = useState(false);
+  const [rateError, setRateError] = useState<string | null>(null);
+  const [rateFetchedAt, setRateFetchedAt] = useState<Date | null>(null);
+
   useEffect(() => {
     fetchAll()
       .then(({ students, sessions, payments }) => {
@@ -37,6 +45,35 @@ const App: React.FC = () => {
       .catch(e => setLoadError(e.message ?? 'Failed to load data'))
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (currency === BASE_CURRENCY) {
+      setRate(1);
+      setRateError(null);
+      return;
+    }
+    let cancelled = false;
+    setRateLoading(true);
+    setRateError(null);
+    fetchRate(BASE_CURRENCY, currency)
+      .then(r => {
+        if (cancelled) return;
+        setRate(r);
+        setRateFetchedAt(new Date());
+      })
+      .catch(e => {
+        if (cancelled) return;
+        setRateError(e.message ?? 'Failed to fetch rate');
+      })
+      .finally(() => {
+        if (!cancelled) setRateLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [currency]);
+
+  const toggleCurrency = () => {
+    setCurrency(prev => prev === 'CNY' ? 'AUD' : 'CNY');
+  };
 
   const tabs: TabItem[] = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -206,6 +243,33 @@ const App: React.FC = () => {
             );
           })}
         </nav>
+        <div className="p-4 border-t border-cream-border">
+          <p className="text-[10px] uppercase font-semibold text-stone-400 mb-2 tracking-wider">Currency</p>
+          <button
+            onClick={toggleCurrency}
+            disabled={rateLoading}
+            className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-cream border border-cream-border hover:border-coral-200 hover:bg-coral-50 transition-colors text-sm font-medium text-stone-700 disabled:opacity-60"
+            title={currency === 'CNY' ? 'Switch to Australian Dollar' : 'Switch to Chinese Yuan'}
+          >
+            <span className="flex items-center gap-2">
+              <span className={`inline-block w-7 text-center rounded text-xs px-1 py-0.5 ${currency === 'CNY' ? 'bg-coral-600 text-white' : 'bg-stone-200 text-stone-600'}`}>¥</span>
+              <span>/</span>
+              <span className={`inline-block w-7 text-center rounded text-xs px-1 py-0.5 ${currency === 'AUD' ? 'bg-coral-600 text-white' : 'bg-stone-200 text-stone-600'}`}>A$</span>
+            </span>
+            <span className="flex items-center gap-1 text-xs text-stone-500">
+              {rateLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : CURRENCY_LABELS[currency]}
+            </span>
+          </button>
+          {currency !== BASE_CURRENCY && !rateLoading && !rateError && (
+            <p className="text-[10px] text-stone-400 mt-1.5 leading-tight">
+              ¥1 = A${rate.toFixed(4)}
+              {rateFetchedAt && <> · {rateFetchedAt.toLocaleDateString()}</>}
+            </p>
+          )}
+          {rateError && (
+            <p className="text-[10px] text-red-500 mt-1.5 leading-tight">Rate unavailable: {rateError}</p>
+          )}
+        </div>
       </aside>
 
       <div className="md:hidden fixed top-0 left-0 right-0 bg-white border-b border-cream-border z-20 px-4 py-3 flex justify-between items-center shadow-sm">
@@ -240,6 +304,20 @@ const App: React.FC = () => {
                 </button>
               );
             })}
+            <button
+              onClick={toggleCurrency}
+              disabled={rateLoading}
+              className="w-full flex items-center justify-between gap-3 px-4 py-4 text-base font-medium rounded-xl bg-cream border border-cream-border"
+            >
+              <span className="flex items-center gap-2 text-stone-700">
+                <span className={`inline-block w-8 text-center rounded text-sm px-1.5 py-0.5 ${currency === 'CNY' ? 'bg-coral-600 text-white' : 'bg-stone-200 text-stone-600'}`}>¥</span>
+                <span>/</span>
+                <span className={`inline-block w-8 text-center rounded text-sm px-1.5 py-0.5 ${currency === 'AUD' ? 'bg-coral-600 text-white' : 'bg-stone-200 text-stone-600'}`}>A$</span>
+              </span>
+              <span className="text-sm text-stone-500 flex items-center gap-1">
+                {rateLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : CURRENCY_LABELS[currency]}
+              </span>
+            </button>
           </nav>
         </div>
       )}
@@ -259,6 +337,8 @@ const App: React.FC = () => {
             payments={payments}
             onUpdatePayment={handleUpdatePayment}
             onDeletePayment={handleDeletePayment}
+            currency={currency}
+            rate={rate}
           />
         )}
 
@@ -269,6 +349,8 @@ const App: React.FC = () => {
             onUpdateStudent={handleUpdateStudent}
             onDeleteStudent={handleDeleteStudent}
             onSelectStudent={setSelectedStudent}
+            currency={currency}
+            rate={rate}
           />
         )}
 

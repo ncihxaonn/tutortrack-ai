@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Student, ClassType, StudentStatus, ClassPackage } from '../types';
 import { Search, Plus, User, Trash2, Archive, RotateCcw, AlertTriangle } from 'lucide-react';
+import { Currency, CURRENCY_SYMBOLS, formatMoney } from '../lib/currency';
 
 interface StudentListProps {
   students: Student[];
@@ -8,9 +9,11 @@ interface StudentListProps {
   onUpdateStudent: (student: Student) => void;
   onDeleteStudent: (id: string) => void;
   onSelectStudent: (student: Student) => void;
+  currency: Currency;
+  rate: number;
 }
 
-const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpdateStudent, onDeleteStudent, onSelectStudent }) => {
+const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpdateStudent, onDeleteStudent, onSelectStudent, currency, rate }) => {
   const [viewStatus, setViewStatus] = useState<StudentStatus>('Active');
   const [searchTerm, setSearchTerm] = useState('');
   const [isAdding, setIsAdding] = useState(false);
@@ -56,7 +59,7 @@ const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpd
         packages.push({ type: ClassType.OneOnOne, total: oneOnOneClasses, active: true });
         initialBalance -= oneOnOnePaid; // Credit
         if (oneOnOnePaid > 0) {
-            autoNotes += `Initial Payment: $${oneOnOnePaid} for ${oneOnOneClasses} One-on-One sessions. `;
+            autoNotes += `Initial Payment: ${CURRENCY_SYMBOLS.CNY}${oneOnOnePaid} for ${oneOnOneClasses} One-on-One sessions. `;
         }
     }
 
@@ -65,7 +68,7 @@ const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpd
         packages.push({ type: ClassType.Group, total: groupClasses, active: true });
         initialBalance -= groupPaid; // Credit
         if (groupPaid > 0) {
-            autoNotes += `Initial Payment: $${groupPaid} for ${groupClasses} One-on-Two sessions. `;
+            autoNotes += `Initial Payment: ${CURRENCY_SYMBOLS.CNY}${groupPaid} for ${groupClasses} One-on-Two sessions. `;
         }
     }
 
@@ -198,7 +201,7 @@ const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpd
                             />
                         </div>
                         <div>
-                            <label className="block text-xs font-medium text-stone-500 mb-1">Amount Paid ($)</label>
+                            <label className="block text-xs font-medium text-stone-500 mb-1">Amount Paid ({CURRENCY_SYMBOLS.CNY})</label>
                             <input
                                 type="number"
                                 min="0"
@@ -237,7 +240,7 @@ const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpd
                             />
                         </div>
                         <div>
-                            <label className="block text-xs font-medium text-stone-500 mb-1">Amount Paid ($)</label>
+                            <label className="block text-xs font-medium text-stone-500 mb-1">Amount Paid ({CURRENCY_SYMBOLS.CNY})</label>
                             <input
                                 type="number"
                                 min="0"
@@ -323,7 +326,7 @@ const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpd
               <div className="text-xs">
                 <p className="text-stone-400">Balance</p>
                 <p className={`font-medium ${student.balance > 0 ? 'text-red-500' : 'text-emerald-600'}`}>
-                  {student.balance > 0 ? `Owes $${student.balance}` : student.balance < 0 ? `Credit $${Math.abs(student.balance)}` : 'Settled'}
+                  {student.balance > 0 ? `Owes ${formatMoney(student.balance, currency, rate)}` : student.balance < 0 ? `Credit ${formatMoney(Math.abs(student.balance), currency, rate)}` : 'Settled'}
                 </p>
               </div>
               

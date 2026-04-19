@@ -3,6 +3,7 @@ import { Student, Session, Payment, AttendanceStatus, ClassType, ClassPackage, S
 import { X, Sparkles, PlusCircle, Edit2, Save, XCircle, TrendingUp, Activity, FileText, Trash2, AlertTriangle } from 'lucide-react';
 import { generateStudentReport } from '../services/geminiService';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
+import { CURRENCY_SYMBOLS } from '../lib/currency';
 
 interface StudentDetailProps {
   student: Student;
@@ -297,11 +298,11 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, onClos
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-xs font-medium text-stone-500 mb-1">Amount Paid ($)</label>
-                                        <input 
-                                            type="number" 
+                                        <label className="block text-xs font-medium text-stone-500 mb-1">Amount Paid ({CURRENCY_SYMBOLS.CNY})</label>
+                                        <input
+                                            type="number"
                                             min="0"
-                                            value={renewCost} 
+                                            value={renewCost}
                                             onChange={e => setRenewCost(parseFloat(e.target.value) || 0)}
                                             className="w-full p-2 rounded-md border text-sm"
                                         />

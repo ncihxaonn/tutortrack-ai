@@ -5,6 +5,7 @@ import {
 } from 'recharts';
 import { Users, DollarSign, CalendarCheck, TrendingUp, Activity, Calendar, Pencil, Trash2, AlertTriangle } from 'lucide-react';
 import { Student, Session, Payment, AttendanceStatus } from '../types';
+import { Currency, CURRENCY_SYMBOLS, formatMoney } from '../lib/currency';
 
 interface DashboardProps {
   students: Student[];
@@ -12,9 +13,11 @@ interface DashboardProps {
   payments: Payment[];
   onUpdatePayment: (p: Payment) => void;
   onDeletePayment: (id: string) => void;
+  currency: Currency;
+  rate: number;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ students, sessions, payments, onUpdatePayment, onDeletePayment }) => {
+const Dashboard: React.FC<DashboardProps> = ({ students, sessions, payments, onUpdatePayment, onDeletePayment, currency, rate }) => {
   const [editingPayment, setEditingPayment] = useState<Payment | null>(null);
   const [paymentToDelete, setPaymentToDelete] = useState<Payment | null>(null);
 
@@ -117,13 +120,13 @@ const Dashboard: React.FC<DashboardProps> = ({ students, sessions, payments, onU
 
       {/* Top Stats Row */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard 
-          title="Total Revenue" 
-          value={`$${totalRevenue.toLocaleString()}`} 
+        <StatCard
+          title="Total Revenue"
+          value={formatMoney(totalRevenue, currency, rate)}
           sub="All time"
           trend="up"
-          icon={DollarSign} 
-          color="bg-emerald-500" 
+          icon={DollarSign}
+          color="bg-emerald-500"
         />
         <StatCard 
           title="Active Students" 
@@ -139,12 +142,12 @@ const Dashboard: React.FC<DashboardProps> = ({ students, sessions, payments, onU
           icon={CalendarCheck}
           color="bg-coral-500"
         />
-        <StatCard 
-          title="Outstanding" 
-          value={`$${totalOutstanding}`} 
+        <StatCard
+          title="Outstanding"
+          value={formatMoney(totalOutstanding, currency, rate)}
           sub="To collect"
-          icon={TrendingUp} 
-          color="bg-rose-500" 
+          icon={TrendingUp}
+          color="bg-rose-500"
         />
       </div>
 
@@ -175,10 +178,10 @@ const Dashboard: React.FC<DashboardProps> = ({ students, sessions, payments, onU
                             </defs>
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#EDE5D7" />
                             <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#78716C', fontSize: 12}} dy={10} />
-                            <YAxis axisLine={false} tickLine={false} tick={{fill: '#78716C', fontSize: 12}} tickFormatter={(value) => `$${value}`} />
-                            <RechartsTooltip 
+                            <YAxis axisLine={false} tickLine={false} tick={{fill: '#78716C', fontSize: 12}} tickFormatter={(value) => formatMoney(value, currency, rate)} />
+                            <RechartsTooltip
                                 contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                                formatter={(value: number) => [`$${value}`, 'Revenue']}
+                                formatter={(value: number) => [formatMoney(value, currency, rate), 'Revenue']}
                             />
                             <Area type="monotone" dataKey="amount" stroke="#10b981" strokeWidth={3} fillOpacity={1} fill="url(#colorRevenue)" />
                         </AreaChart>
@@ -285,7 +288,7 @@ const Dashboard: React.FC<DashboardProps> = ({ students, sessions, payments, onU
                                 </div>
                                 <div className="flex items-center gap-2 shrink-0">
                                     <span className="font-semibold text-emerald-700 bg-emerald-50 px-2 py-1 rounded text-sm">
-                                        +${payment.amount}
+                                        +{formatMoney(payment.amount, currency, rate)}
                                     </span>
                                     <button
                                         onClick={() => setEditingPayment(payment)}
@@ -330,7 +333,7 @@ const Dashboard: React.FC<DashboardProps> = ({ students, sessions, payments, onU
                       <div>
                           <h3 className="font-serif text-lg font-semibold tracking-tight text-stone-900">Delete this payment?</h3>
                           <p className="text-sm text-stone-600 mt-1">
-                              Removing ${paymentToDelete.amount} from {students.find(s => s.id === paymentToDelete.studentId)?.name || 'this student'}. Their balance will be restored by the same amount. This can't be undone.
+                              Removing {formatMoney(paymentToDelete.amount, currency, rate)} from {students.find(s => s.id === paymentToDelete.studentId)?.name || 'this student'}. Their balance will be restored by the same amount. This can't be undone.
                           </p>
                       </div>
                   </div>
@@ -398,13 +401,14 @@ const EditPaymentModal: React.FC<EditPaymentModalProps> = ({ payment, students, 
                         </select>
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-stone-600 mb-1">Amount ($)</label>
+                        <label className="block text-sm font-medium text-stone-600 mb-1">Amount ({CURRENCY_SYMBOLS.CNY})</label>
                         <input
                             type="number"
                             value={amount}
                             onChange={(e) => setAmount(e.target.value)}
                             className="w-full px-3 py-2 border border-cream-border rounded-lg focus:outline-none focus:ring-2 focus:ring-coral-500 text-sm"
                         />
+                        <p className="text-[10px] text-stone-400 mt-1">Stored in CNY regardless of display toggle.</p>
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-stone-600 mb-1">Date</label>
