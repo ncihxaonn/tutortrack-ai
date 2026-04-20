@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { BookOpen, Lock } from 'lucide-react';
 
-const CORRECT_PASSWORD = import.meta.env.VITE_SITE_PASSWORD as string | undefined;
+const CORRECT_PASSWORD = (import.meta.env.VITE_SITE_PASSWORD as string | undefined)?.trim();
 const SESSION_KEY = 'tt_auth';
 
 export function isAuthenticated(): boolean {
