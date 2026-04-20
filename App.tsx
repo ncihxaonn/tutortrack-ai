@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { LayoutDashboard, Users, Calendar, Menu, X, BookOpen, Loader2 } from 'lucide-react';
+import PasswordGate, { isAuthenticated } from './components/PasswordGate';
 import Dashboard from './components/Dashboard';
 import StudentList from './components/StudentList';
 import SessionLog from './components/SessionLog';
@@ -18,6 +19,10 @@ import {
 } from './services/supabaseClient';
 
 const App: React.FC = () => {
+  const [unlocked, setUnlocked] = useState(isAuthenticated);
+
+  if (!unlocked) return <PasswordGate onUnlock={() => setUnlocked(true)} />;
+
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
