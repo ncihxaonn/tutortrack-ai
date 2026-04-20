@@ -1,20 +1,22 @@
-import { NextRequest, NextResponse } from 'next/server';
-
 export const config = { matcher: '/:path*' };
 
-export default function middleware(req: NextRequest) {
+export default function middleware(req: Request): Response | undefined {
   const password = process.env.SITE_PASSWORD;
-  if (!password) return NextResponse.next(); // no password set → open
+  if (!password) return; // no env var set → open (safe for local dev)
 
-  const auth = req.headers.get('authorization');
-  if (auth) {
-    const encoded = auth.replace('Basic ', '');
-    const decoded = atob(encoded);
-    const [, pass] = decoded.split(':');
-    if (pass === password) return NextResponse.next();
+  const auth = req.headers.get('authorization') ?? '';
+  if (auth.startsWith('Basic ')) {
+    try {
+      const decoded = atob(auth.slice(6));
+      const colon = decoded.indexOf(':');
+      const pass = colon >= 0 ? decoded.slice(colon + 1) : decoded;
+      if (pass === password) return; // correct password → let through
+    } catch {
+      // malformed base64 → fall through to 401
+    }
   }
 
-  return new NextResponse('Access denied', {
+  return new Response('Access denied', {
     status: 401,
     headers: { 'WWW-Authenticate': 'Basic realm="TutorTrack"' },
   });
