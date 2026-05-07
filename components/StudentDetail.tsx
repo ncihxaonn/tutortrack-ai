@@ -621,19 +621,31 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
                         </div>
                     </div>
                     
-                    {/* Class Packages — only show the latest active package per type */}
+                    {/* Class Packages — only show the latest active package per type;
+                        progress reflects usage WITHIN that latest package, not cumulative */}
                     {student.packages && student.packages.length > 0 && (() => {
-                        // Keep only the latest entry per type (last occurrence wins)
-                        const latestByType = new Map<ClassType, { pkg: ClassPackage; idx: number }>();
+                        // Group active packages by type, preserving array order so the last one is the latest renewal
+                        const groupedByType = new Map<ClassType, { pkg: ClassPackage; idx: number }[]>();
                         student.packages.forEach((p, i) => {
-                            if (p.active !== false) latestByType.set(p.type as ClassType, { pkg: p, idx: i });
+                            if (p.active === false) return;
+                            const t = p.type as ClassType;
+                            if (!groupedByType.has(t)) groupedByType.set(t, []);
+                            groupedByType.get(t)!.push({ pkg: p, idx: i });
                         });
-                        const visiblePackages = Array.from(latestByType.values());
+                        // For each type, take the LAST entry as the active/current package; remember sum of earlier ones
+                        const visible: { pkg: ClassPackage; idx: number; previousTotal: number }[] = [];
+                        groupedByType.forEach((entries) => {
+                            const latest = entries[entries.length - 1];
+                            const previousTotal = entries.slice(0, -1).reduce((sum, e) => sum + (e.pkg.total || 0), 0);
+                            visible.push({ ...latest, previousTotal });
+                        });
                         return (
                         <div className="space-y-3">
-                            {visiblePackages.map(({ pkg, idx }) => {
-                                // Trials don't consume package classes
-                                const attendedForType = studentSessions.filter(s => s.type === pkg.type && s.status === AttendanceStatus.Present && !isTrialForStudent(s, student.id)).length;
+                            {visible.map(({ pkg, idx, previousTotal }) => {
+                                // Total attended for this type (Present, non-trial)
+                                const totalAttendedForType = studentSessions.filter(s => s.type === pkg.type && s.status === AttendanceStatus.Present && !isTrialForStudent(s, student.id)).length;
+                                // Subtract sessions that belong to earlier (finished) packages of the same type
+                                const attendedForType = Math.max(0, Math.min(pkg.total, totalAttendedForType - previousTotal));
                                 const isEditing = editingPackageIndex === idx;
                                 const progress = Math.min(100, Math.round((attendedForType / pkg.total) * 100));
                                 
