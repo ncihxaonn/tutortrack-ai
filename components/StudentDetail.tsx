@@ -63,6 +63,10 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
   const [editingPaymentId, setEditingPaymentId] = useState<string | null>(null);
   const [editPaymentData, setEditPaymentData] = useState<Payment | null>(null);
 
+  // Edit Profile State (name, parentName, email, notes)
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [editProfileData, setEditProfileData] = useState<{ name: string; parentName: string; email: string; notes: string } | null>(null);
+
   // Save error feedback
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -277,6 +281,50 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
       setEditSessionData({ ...editSessionData, studentStatuses: list, status });
   };
 
+  // ── Profile edit ───────────────────────────────────────────────────
+  const startEditProfile = () => {
+      setEditProfileData({
+          name: student.name || '',
+          parentName: student.parentName || '',
+          email: student.email || '',
+          notes: student.notes || ''
+      });
+      setIsEditingProfile(true);
+      setSaveError(null);
+  };
+
+  const cancelEditProfile = () => {
+      setIsEditingProfile(false);
+      setEditProfileData(null);
+      setSaveError(null);
+  };
+
+  const saveEditProfile = async () => {
+      if (!editProfileData) return;
+      const trimmedName = editProfileData.name.trim();
+      if (!trimmedName) {
+          setSaveError('Name cannot be empty.');
+          return;
+      }
+      try {
+          setIsSaving(true);
+          setSaveError(null);
+          await onUpdateStudent({
+              ...student,
+              name: trimmedName,
+              parentName: editProfileData.parentName.trim() || undefined,
+              email: editProfileData.email.trim() || undefined,
+              notes: editProfileData.notes
+          });
+          setIsEditingProfile(false);
+          setEditProfileData(null);
+      } catch (err: any) {
+          setSaveError(`Failed to save: ${err?.message ?? String(err)}`);
+      } finally {
+          setIsSaving(false);
+      }
+  };
+
   // ── Payment edit/delete ────────────────────────────────────────────
   const startEditPayment = (p: Payment) => {
       setEditingPaymentId(p.id);
@@ -375,6 +423,107 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
             {activeTab === 'overview' ? (
                 <>
+                    {/* Profile Card (editable) */}
+                    <div className="bg-white p-4 rounded-2xl border border-cream-border shadow-sm">
+                        {!isEditingProfile ? (
+                            <div className="space-y-2">
+                                <div className="flex items-center justify-between">
+                                    <h3 className="font-semibold text-stone-800 text-sm">Profile</h3>
+                                    <button
+                                        onClick={startEditProfile}
+                                        className="p-1 text-stone-400 hover:text-coral-600 hover:bg-coral-50 rounded transition-colors"
+                                        title="Edit Profile"
+                                    >
+                                        <Edit2 className="w-4 h-4" />
+                                    </button>
+                                </div>
+                                <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+                                    <div>
+                                        <p className="text-[10px] uppercase font-bold text-stone-500">Name</p>
+                                        <p className="text-stone-800">{student.name}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-[10px] uppercase font-bold text-stone-500">Parent</p>
+                                        <p className="text-stone-800">{student.parentName || <span className="text-stone-400 italic">—</span>}</p>
+                                    </div>
+                                    <div className="col-span-2">
+                                        <p className="text-[10px] uppercase font-bold text-stone-500">Email</p>
+                                        <p className="text-stone-800 break-all">{student.email || <span className="text-stone-400 italic">—</span>}</p>
+                                    </div>
+                                    {student.notes && (
+                                        <div className="col-span-2">
+                                            <p className="text-[10px] uppercase font-bold text-stone-500">Notes</p>
+                                            <p className="text-stone-700 whitespace-pre-wrap">{student.notes}</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        ) : editProfileData && (
+                            <div className="space-y-3">
+                                <div className="flex items-center justify-between">
+                                    <h3 className="font-semibold text-stone-800 text-sm">Edit Profile</h3>
+                                    <button onClick={cancelEditProfile} className="p-1 text-stone-400 hover:text-stone-600">
+                                        <X className="w-4 h-4" />
+                                    </button>
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] uppercase font-bold text-stone-500 mb-1">Name</label>
+                                    <input
+                                        type="text"
+                                        value={editProfileData.name}
+                                        onChange={e => setEditProfileData({ ...editProfileData, name: e.target.value })}
+                                        className="w-full p-2 rounded-md border text-xs"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] uppercase font-bold text-stone-500 mb-1">Parent Name</label>
+                                    <input
+                                        type="text"
+                                        value={editProfileData.parentName}
+                                        onChange={e => setEditProfileData({ ...editProfileData, parentName: e.target.value })}
+                                        className="w-full p-2 rounded-md border text-xs"
+                                        placeholder="Parent's name"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] uppercase font-bold text-stone-500 mb-1">Email</label>
+                                    <input
+                                        type="email"
+                                        value={editProfileData.email}
+                                        onChange={e => setEditProfileData({ ...editProfileData, email: e.target.value })}
+                                        className="w-full p-2 rounded-md border text-xs"
+                                        placeholder="parent@example.com"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] uppercase font-bold text-stone-500 mb-1">Notes</label>
+                                    <textarea
+                                        value={editProfileData.notes}
+                                        onChange={e => setEditProfileData({ ...editProfileData, notes: e.target.value })}
+                                        rows={3}
+                                        className="w-full p-2 rounded-md border text-xs"
+                                        placeholder="Any notes about the student"
+                                    />
+                                </div>
+                                {saveError && <p className="text-xs text-red-600">{saveError}</p>}
+                                <div className="flex justify-end gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={cancelEditProfile}
+                                        disabled={isSaving}
+                                        className="px-3 py-1.5 text-xs text-stone-600 bg-white border border-cream-border rounded-md hover:bg-stone-50 disabled:opacity-50"
+                                    >Cancel</button>
+                                    <button
+                                        type="button"
+                                        onClick={saveEditProfile}
+                                        disabled={isSaving}
+                                        className="px-3 py-1.5 text-xs text-white bg-emerald-600 hover:bg-emerald-700 rounded-md disabled:opacity-50"
+                                    >{isSaving ? 'Saving…' : 'Save'}</button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
                     {/* Skills Radar Chart */}
                     <div className="bg-white p-4 rounded-2xl border border-cream-border shadow-sm">
                         <div className="flex items-center gap-2 mb-2">
