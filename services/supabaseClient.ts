@@ -54,6 +54,7 @@ type PaymentRow = {
   date: string;
   method: string;
   class_count?: number | null;
+  class_type?: string | null;
 };
 
 const toStudent = (r: StudentRow): Student => ({
@@ -140,7 +141,8 @@ const toPayment = (r: PaymentRow): Payment => ({
   amount: Number(r.amount) || 0,
   date: r.date,
   method: r.method,
-  classCount: r.class_count == null ? undefined : Number(r.class_count)
+  classCount: r.class_count == null ? undefined : Number(r.class_count),
+  classType: r.class_type ? (r.class_type as ClassType) : undefined
 });
 
 const fromPayment = (p: Payment) => ({
@@ -149,7 +151,8 @@ const fromPayment = (p: Payment) => ({
   amount: p.amount,
   date: p.date,
   method: p.method,
-  class_count: p.classCount == null ? null : p.classCount
+  class_count: p.classCount == null ? null : p.classCount,
+  class_type: p.classType ?? null
 });
 
 export async function fetchAll() {

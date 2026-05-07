@@ -621,47 +621,47 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
                         </div>
                     </div>
                     
-                    {/* Class Packages — only show the latest active package per type;
-                        progress reflects usage WITHIN that latest package, not cumulative */}
-                    {student.packages && student.packages.length > 0 && (() => {
-                        // Group active packages by type, preserving array order so the last one is the latest renewal
-                        const groupedByType = new Map<ClassType, { pkg: ClassPackage; idx: number }[]>();
-                        student.packages.forEach((p, i) => {
-                            if (p.active === false) return;
-                            const t = p.type as ClassType;
-                            if (!groupedByType.has(t)) groupedByType.set(t, []);
-                            groupedByType.get(t)!.push({ pkg: p, idx: i });
+                    {/* Class Packages — derived from PAYMENTS (the source of truth).
+                        For each class type, the latest payment's classCount = current package size.
+                        Progress = sessions attended after subtracting earlier (finished) payments. */}
+                    {(() => {
+                        // Group this student's payments by classType, sorted by date asc
+                        const myPayments = (payments || [])
+                            .filter(p => p.studentId === student.id && p.classType && typeof p.classCount === 'number' && (p.classCount as number) > 0)
+                            .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+                        const byType = new Map<ClassType, Payment[]>();
+                        myPayments.forEach(p => {
+                            const t = p.classType as ClassType;
+                            if (!byType.has(t)) byType.set(t, []);
+                            byType.get(t)!.push(p);
                         });
-                        // For each type, take the LAST entry as the active/current package; remember sum of earlier ones
-                        const visible: { pkg: ClassPackage; idx: number; previousTotal: number }[] = [];
-                        groupedByType.forEach((entries) => {
-                            const latest = entries[entries.length - 1];
-                            const previousTotal = entries.slice(0, -1).reduce((sum, e) => sum + (e.pkg.total || 0), 0);
-                            visible.push({ ...latest, previousTotal });
+                        if (byType.size === 0) return null;
+                        type Visible = { type: ClassType; total: number; previousTotal: number; latestPaymentDate: string };
+                        const visible: Visible[] = [];
+                        byType.forEach((list, type) => {
+                            const latest = list[list.length - 1];
+                            const previousTotal = list.slice(0, -1).reduce((sum, p) => sum + (p.classCount || 0), 0);
+                            visible.push({ type, total: latest.classCount || 0, previousTotal, latestPaymentDate: latest.date });
                         });
                         return (
                         <div className="space-y-3">
-                            {visible.map(({ pkg, idx, previousTotal }) => {
+                            {visible.map(({ type, total, previousTotal, latestPaymentDate }) => {
                                 // Total attended for this type (Present, non-trial)
-                                const totalAttendedForType = studentSessions.filter(s => s.type === pkg.type && s.status === AttendanceStatus.Present && !isTrialForStudent(s, student.id)).length;
+                                const totalAttendedForType = studentSessions.filter(s => s.type === type && s.status === AttendanceStatus.Present && !isTrialForStudent(s, student.id)).length;
                                 // Subtract sessions that belong to earlier (finished) packages of the same type
-                                const attendedForType = Math.max(0, Math.min(pkg.total, totalAttendedForType - previousTotal));
-                                const isEditing = editingPackageIndex === idx;
-                                const progress = Math.min(100, Math.round((attendedForType / pkg.total) * 100));
+                                const attendedForType = Math.max(0, Math.min(total, totalAttendedForType - previousTotal));
+                                const isEditing = false; // legacy package edit form is disabled in payment-driven mode
+                                const progress = Math.min(100, Math.round((attendedForType / total) * 100));
+                                const pkg = { type, total, active: true } as ClassPackage;
+                                const idx = -1;
                                 
                                 return (
-                                    <div key={idx} className="bg-white p-5 rounded-2xl border border-cream-border shadow-sm transition-all">
+                                    <div key={`${type}-${latestPaymentDate}`} className="bg-white p-5 rounded-2xl border border-cream-border shadow-sm transition-all">
                                         <div className="flex justify-between items-center mb-3">
                                             <h3 className="font-semibold text-stone-800">{pkg.type} Package</h3>
-                                            {!isEditing && (
-                                                <button 
-                                                    onClick={() => startEditing(idx, pkg.total, attendedForType)}
-                                                    className="p-1 text-stone-400 hover:text-coral-600 hover:bg-coral-50 rounded"
-                                                    title="Edit Remaining Classes"
-                                                >
-                                                    <Edit2 className="w-4 h-4" />
-                                                </button>
-                                            )}
+                                            <span className="text-[10px] text-stone-400" title="Edit number of classes from the payment in History → Purchases">
+                                                Last renewed {new Date(latestPaymentDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                            </span>
                                         </div>
 
                                         {isEditing ? (
@@ -1165,14 +1165,26 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
                                                                 />
                                                             </div>
                                                             <div>
-                                                                <label className="block text-[10px] uppercase font-bold text-stone-500 mb-1">Method / Note</label>
-                                                                <input
-                                                                    type="text"
-                                                                    value={editPaymentData.method || ''}
-                                                                    onChange={e => setEditPaymentData({ ...editPaymentData, method: e.target.value })}
+                                                                <label className="block text-[10px] uppercase font-bold text-stone-500 mb-1">Class Type</label>
+                                                                <select
+                                                                    value={editPaymentData.classType || ''}
+                                                                    onChange={e => setEditPaymentData({ ...editPaymentData, classType: e.target.value === '' ? undefined : e.target.value as ClassType })}
                                                                     className="w-full p-2 rounded-md border text-xs"
-                                                                />
+                                                                >
+                                                                    <option value="">— None —</option>
+                                                                    <option value={ClassType.OneOnOne}>One-on-One</option>
+                                                                    <option value={ClassType.Group}>One-on-Two</option>
+                                                                </select>
                                                             </div>
+                                                        </div>
+                                                        <div>
+                                                            <label className="block text-[10px] uppercase font-bold text-stone-500 mb-1">Method / Note</label>
+                                                            <input
+                                                                type="text"
+                                                                value={editPaymentData.method || ''}
+                                                                onChange={e => setEditPaymentData({ ...editPaymentData, method: e.target.value })}
+                                                                className="w-full p-2 rounded-md border text-xs"
+                                                            />
                                                         </div>
                                                         {saveError && <p className="text-xs text-red-600">{saveError}</p>}
                                                         <div className="flex justify-end gap-2">
@@ -1201,10 +1213,15 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
                                                     <div className="flex-1 min-w-0">
                                                         <div className="flex items-center justify-between gap-2">
                                                             <h4 className="font-medium text-stone-800">{formatMoney(payment.amount, currency, rate)}</h4>
-                                                            <div className="flex items-center gap-1.5 flex-shrink-0">
+                                                            <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">
                                                                 {typeof payment.classCount === 'number' && (
                                                                     <span className="text-[10px] px-2 py-0.5 rounded-full bg-coral-50 text-coral-700 border border-coral-100">
                                                                         {payment.classCount} {payment.classCount === 1 ? 'class' : 'classes'}
+                                                                    </span>
+                                                                )}
+                                                                {payment.classType && (
+                                                                    <span className={`text-[10px] px-2 py-0.5 rounded-full ${payment.classType === ClassType.OneOnOne ? 'bg-blue-50 text-blue-700 border border-blue-100' : 'bg-orange-50 text-orange-700 border border-orange-100'}`}>
+                                                                        {payment.classType}
                                                                     </span>
                                                                 )}
                                                                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">

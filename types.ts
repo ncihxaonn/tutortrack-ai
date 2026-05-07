@@ -82,6 +82,7 @@ export interface Payment {
   date: string;
   method: string;
   classCount?: number; // optional: number of classes purchased with this payment
+  classType?: ClassType; // optional: which package type this payment is for
 }
 
 export interface TabItem {
