@@ -621,10 +621,17 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
                         </div>
                     </div>
                     
-                    {/* Class Packages */}
-                    {student.packages && student.packages.length > 0 && (
+                    {/* Class Packages — only show the latest active package per type */}
+                    {student.packages && student.packages.length > 0 && (() => {
+                        // Keep only the latest entry per type (last occurrence wins)
+                        const latestByType = new Map<ClassType, { pkg: ClassPackage; idx: number }>();
+                        student.packages.forEach((p, i) => {
+                            if (p.active !== false) latestByType.set(p.type as ClassType, { pkg: p, idx: i });
+                        });
+                        const visiblePackages = Array.from(latestByType.values());
+                        return (
                         <div className="space-y-3">
-                            {student.packages.map((pkg, idx) => {
+                            {visiblePackages.map(({ pkg, idx }) => {
                                 // Trials don't consume package classes
                                 const attendedForType = studentSessions.filter(s => s.type === pkg.type && s.status === AttendanceStatus.Present && !isTrialForStudent(s, student.id)).length;
                                 const isEditing = editingPackageIndex === idx;
@@ -707,7 +714,8 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
                                 );
                             })}
                         </div>
-                    )}
+                        );
+                    })()}
 
                     {/* AI Report Section */}
                     <div className="bg-coral-50 rounded-xl p-5 border border-violet-100">
