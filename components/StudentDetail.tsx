@@ -976,14 +976,34 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
                                                                 />
                                                             </div>
                                                         </div>
-                                                        <div>
-                                                            <label className="block text-[10px] uppercase font-bold text-stone-500 mb-1">Method / Note</label>
-                                                            <input
-                                                                type="text"
-                                                                value={editPaymentData.method || ''}
-                                                                onChange={e => setEditPaymentData({ ...editPaymentData, method: e.target.value })}
-                                                                className="w-full p-2 rounded-md border text-xs"
-                                                            />
+                                                        <div className="grid grid-cols-2 gap-3">
+                                                            <div>
+                                                                <label className="block text-[10px] uppercase font-bold text-stone-500 mb-1">Number of Classes</label>
+                                                                <input
+                                                                    type="number"
+                                                                    min="0"
+                                                                    step="1"
+                                                                    placeholder="e.g. 10"
+                                                                    value={editPaymentData.classCount ?? ''}
+                                                                    onChange={e => {
+                                                                        const v = e.target.value;
+                                                                        setEditPaymentData({
+                                                                            ...editPaymentData,
+                                                                            classCount: v === '' ? undefined : Math.max(0, parseInt(v, 10) || 0)
+                                                                        });
+                                                                    }}
+                                                                    className="w-full p-2 rounded-md border text-xs"
+                                                                />
+                                                            </div>
+                                                            <div>
+                                                                <label className="block text-[10px] uppercase font-bold text-stone-500 mb-1">Method / Note</label>
+                                                                <input
+                                                                    type="text"
+                                                                    value={editPaymentData.method || ''}
+                                                                    onChange={e => setEditPaymentData({ ...editPaymentData, method: e.target.value })}
+                                                                    className="w-full p-2 rounded-md border text-xs"
+                                                                />
+                                                            </div>
                                                         </div>
                                                         {saveError && <p className="text-xs text-red-600">{saveError}</p>}
                                                         <div className="flex justify-end gap-2">
@@ -1012,9 +1032,16 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
                                                     <div className="flex-1 min-w-0">
                                                         <div className="flex items-center justify-between gap-2">
                                                             <h4 className="font-medium text-stone-800">{formatMoney(payment.amount, currency, rate)}</h4>
-                                                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">
-                                                                {payment.method || 'Payment'}
-                                                            </span>
+                                                            <div className="flex items-center gap-1.5 flex-shrink-0">
+                                                                {typeof payment.classCount === 'number' && (
+                                                                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-coral-50 text-coral-700 border border-coral-100">
+                                                                        {payment.classCount} {payment.classCount === 1 ? 'class' : 'classes'}
+                                                                    </span>
+                                                                )}
+                                                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">
+                                                                    {payment.method || 'Payment'}
+                                                                </span>
+                                                            </div>
                                                         </div>
                                                         <p className="text-xs text-stone-500 mt-1">{new Date(payment.date).toLocaleDateString('en-US', { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })}</p>
                                                     </div>
