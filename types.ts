@@ -61,6 +61,17 @@ export interface Session {
   notes: string;
   price: number;
   isTrial?: boolean;
+  teacherId?: string;
+}
+
+export interface Teacher {
+  id: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  notes: string;
+  joinedDate: string;
+  status: StudentStatus; // reuse Active/Archived
 }
 
 export interface Payment {

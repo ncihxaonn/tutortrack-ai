@@ -3,19 +3,26 @@ import { Student, Session, Payment, AttendanceStatus, ClassType, ClassPackage, S
 import { X, Sparkles, PlusCircle, Edit2, Save, XCircle, TrendingUp, Activity, FileText, Trash2, AlertTriangle } from 'lucide-react';
 import { generateStudentReport } from '../services/geminiService';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
-import { CURRENCY_SYMBOLS } from '../lib/currency';
+import { CURRENCY_SYMBOLS, Currency, formatMoney } from '../lib/currency';
 
 interface StudentDetailProps {
   student: Student;
   sessions: Session[];
-  payments: Payment[]; 
+  payments: Payment[];
   onClose: () => void;
   onUpdatePayment: (studentId: string, amount: number) => void;
-  onUpdateStudent: (student: Student) => void;
+  onUpdateStudent: (student: Student) => void | Promise<void>;
+  onUpdateSession?: (session: Session) => Promise<void> | void;
+  onDeleteSession?: (id: string) => Promise<void> | void;
+  onSavePayment?: (payment: Payment) => Promise<void> | void;
+  onDeletePayment?: (id: string) => Promise<void> | void;
+  currency?: Currency;
+  rate?: number;
 }
 
-const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, onClose, onUpdateStudent }) => {
+const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, payments, onClose, onUpdateStudent, onUpdateSession, onDeleteSession, onSavePayment, onDeletePayment, currency = 'CNY' as Currency, rate = 1 }) => {
   const [activeTab, setActiveTab] = useState<'overview' | 'progress' | 'history'>('overview');
+  const [historyTab, setHistoryTab] = useState<'classes' | 'purchases'>('classes');
   const [isGenerating, setIsGenerating] = useState(false);
   const [aiReport, setAiReport] = useState<string | null>(null);
 
@@ -45,10 +52,38 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, onClos
 
   // Delete Confirmation State
   const [logToDelete, setLogToDelete] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<{ kind: 'session' | 'payment'; id: string; label: string } | null>(null);
+
+  // Edit Session State
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editSessionData, setEditSessionData] = useState<Session | null>(null);
+
+  // Edit Payment State
+  const [editingPaymentId, setEditingPaymentId] = useState<string | null>(null);
+  const [editPaymentData, setEditPaymentData] = useState<Payment | null>(null);
+
+  // Save error feedback
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   const studentSessions = sessions.filter(s => s.studentIds.includes(student.id));
   const attendedCount = studentSessions.filter(s => s.status === AttendanceStatus.Present).length;
   const attendanceRate = studentSessions.length ? Math.round((attendedCount / studentSessions.length) * 100) : 0;
+
+  // Lesson numbering per class type — only Present + non-trial sessions count toward a package
+  const lessonNumberMap = new Map<string, number>();
+  {
+    const counters: Record<string, number> = {};
+    const ascSessions = [...studentSessions].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    for (const s of ascSessions) {
+      if (s.isTrial) continue;
+      const myStatus = s.studentStatuses?.find(ss => ss.studentId === student.id)?.status || s.status;
+      if (myStatus !== AttendanceStatus.Present) continue;
+      counters[s.type] = (counters[s.type] || 0) + 1;
+      lessonNumberMap.set(s.id, counters[s.type]);
+    }
+  }
+  const PACKAGE_SIZE = 10;
   
   // Charts Data
   const progressHistory = student.progressHistory || [];
@@ -70,12 +105,16 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, onClos
     setIsGenerating(false);
   };
 
-  const handleRenewPackage = (e: React.FormEvent) => {
+  const handleRenewPackage = async (e: React.FormEvent) => {
       e.preventDefault();
-      
+      if (renewClasses <= 0) {
+          setSaveError('Number of sessions must be at least 1.');
+          return;
+      }
+
       const newPackages = [...(student.packages || [])];
       const existingPackageIndex = newPackages.findIndex(p => p.type === renewType);
-      
+
       if (existingPackageIndex >= 0) {
           newPackages[existingPackageIndex] = {
               ...newPackages[existingPackageIndex],
@@ -91,21 +130,28 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, onClos
       }
 
       const newBalance = student.balance - renewCost;
-      
-      const newClassTypes = student.classTypes.includes(renewType) 
-        ? student.classTypes 
+
+      const newClassTypes = student.classTypes.includes(renewType)
+        ? student.classTypes
         : [...student.classTypes, renewType];
 
-      onUpdateStudent({
-          ...student,
-          packages: newPackages,
-          balance: newBalance,
-          classTypes: newClassTypes
-      });
-
-      setIsRenewing(false);
-      setRenewClasses(10);
-      setRenewCost(400);
+      try {
+          setIsSaving(true);
+          setSaveError(null);
+          await onUpdateStudent({
+              ...student,
+              packages: newPackages,
+              balance: newBalance,
+              classTypes: newClassTypes
+          });
+          setIsRenewing(false);
+          setRenewClasses(10);
+          setRenewCost(400);
+      } catch (err: any) {
+          setSaveError(`Failed to save: ${err?.message ?? String(err)}`);
+      } finally {
+          setIsSaving(false);
+      }
   };
 
   const startEditing = (index: number, total: number, attended: number) => {
@@ -113,22 +159,30 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, onClos
       setEditRemainingCount(total - attended);
   };
 
-  const savePackageEdit = (index: number, attended: number) => {
+  const savePackageEdit = async (index: number, attended: number) => {
       if (!student.packages) return;
-      
+
       const newPackages = [...student.packages];
       const newTotal = attended + editRemainingCount;
-      
+
       newPackages[index] = {
           ...newPackages[index],
           total: newTotal
       };
 
-      onUpdateStudent({
-          ...student,
-          packages: newPackages
-      });
-      setEditingPackageIndex(null);
+      try {
+          setIsSaving(true);
+          setSaveError(null);
+          await onUpdateStudent({
+              ...student,
+              packages: newPackages
+          });
+          setEditingPackageIndex(null);
+      } catch (err: any) {
+          setSaveError(`Failed to save: ${err?.message ?? String(err)}`);
+      } finally {
+          setIsSaving(false);
+      }
   };
 
   const handleAddProgress = (e: React.FormEvent) => {
@@ -173,7 +227,7 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, onClos
   const handleSaveEditLog = () => {
       if (!editLogData || !student.progressHistory) return;
 
-      const updatedHistory = student.progressHistory.map(p => 
+      const updatedHistory = student.progressHistory.map(p =>
           p.id === editLogData.id ? editLogData : p
       ).sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
@@ -183,6 +237,89 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, onClos
       });
       setEditingLogId(null);
       setEditLogData(null);
+  };
+
+  // ── Session edit/delete ────────────────────────────────────────────
+  const startEditSession = (s: Session) => {
+      setEditingSessionId(s.id);
+      setEditSessionData({ ...s, studentStatuses: s.studentStatuses ? [...s.studentStatuses] : [] });
+      setSaveError(null);
+  };
+
+  const cancelEditSession = () => {
+      setEditingSessionId(null);
+      setEditSessionData(null);
+      setSaveError(null);
+  };
+
+  const saveEditSession = async () => {
+      if (!editSessionData || !onUpdateSession) return;
+      try {
+          setIsSaving(true);
+          setSaveError(null);
+          await onUpdateSession(editSessionData);
+          setEditingSessionId(null);
+          setEditSessionData(null);
+      } catch (err: any) {
+          setSaveError(`Failed to save: ${err?.message ?? String(err)}`);
+      } finally {
+          setIsSaving(false);
+      }
+  };
+
+  const updateEditSessionStudentStatus = (status: AttendanceStatus) => {
+      if (!editSessionData) return;
+      const list = editSessionData.studentStatuses ? [...editSessionData.studentStatuses] : [];
+      const idx = list.findIndex(s => s.studentId === student.id);
+      if (idx >= 0) list[idx] = { ...list[idx], status };
+      else list.push({ studentId: student.id, status });
+      setEditSessionData({ ...editSessionData, studentStatuses: list, status });
+  };
+
+  // ── Payment edit/delete ────────────────────────────────────────────
+  const startEditPayment = (p: Payment) => {
+      setEditingPaymentId(p.id);
+      setEditPaymentData({ ...p });
+      setSaveError(null);
+  };
+
+  const cancelEditPayment = () => {
+      setEditingPaymentId(null);
+      setEditPaymentData(null);
+      setSaveError(null);
+  };
+
+  const saveEditPayment = async () => {
+      if (!editPaymentData || !onSavePayment) return;
+      try {
+          setIsSaving(true);
+          setSaveError(null);
+          await onSavePayment(editPaymentData);
+          setEditingPaymentId(null);
+          setEditPaymentData(null);
+      } catch (err: any) {
+          setSaveError(`Failed to save: ${err?.message ?? String(err)}`);
+      } finally {
+          setIsSaving(false);
+      }
+  };
+
+  const performConfirmDelete = async () => {
+      if (!confirmDelete) return;
+      try {
+          setIsSaving(true);
+          setSaveError(null);
+          if (confirmDelete.kind === 'session' && onDeleteSession) {
+              await onDeleteSession(confirmDelete.id);
+          } else if (confirmDelete.kind === 'payment' && onDeletePayment) {
+              await onDeletePayment(confirmDelete.id);
+          }
+          setConfirmDelete(null);
+      } catch (err: any) {
+          setSaveError(`Failed to delete: ${err?.message ?? String(err)}`);
+      } finally {
+          setIsSaving(false);
+      }
   };
 
   return (
@@ -273,7 +410,7 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, onClos
                             <form onSubmit={handleRenewPackage} className="space-y-3 animate-in fade-in slide-in-from-top-2">
                                 <div className="flex justify-between items-center mb-2">
                                     <h4 className="font-semibold text-stone-800">Add Sessions</h4>
-                                    <button type="button" onClick={() => setIsRenewing(false)} className="text-stone-400 hover:text-stone-600"><X className="w-4 h-4" /></button>
+                                    <button type="button" onClick={() => { setIsRenewing(false); setSaveError(null); }} className="text-stone-400 hover:text-stone-600"><X className="w-4 h-4" /></button>
                                 </div>
                                 <div>
                                     <label className="block text-xs font-medium text-stone-500 mb-1">Program Type</label>
@@ -308,8 +445,15 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, onClos
                                         />
                                     </div>
                                 </div>
-                                <button type="submit" className="w-full bg-coral-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-coral-700">
-                                    Confirm Renewal
+                                {saveError && (
+                                    <p className="text-xs text-red-600">{saveError}</p>
+                                )}
+                                <button
+                                    type="submit"
+                                    disabled={isSaving}
+                                    className="w-full bg-coral-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-coral-700 disabled:opacity-50"
+                                >
+                                    {isSaving ? 'Saving…' : `Add ${renewClasses} sessions`}
                                 </button>
                             </form>
                         )}
@@ -331,7 +475,8 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, onClos
                     {student.packages && student.packages.length > 0 && (
                         <div className="space-y-3">
                             {student.packages.map((pkg, idx) => {
-                                const attendedForType = studentSessions.filter(s => s.type === pkg.type && s.status === AttendanceStatus.Present).length;
+                                // Trials don't consume package classes
+                                const attendedForType = studentSessions.filter(s => s.type === pkg.type && s.status === AttendanceStatus.Present && !s.isTrial).length;
                                 const isEditing = editingPackageIndex === idx;
                                 const progress = Math.min(100, Math.round((attendedForType / pkg.total) * 100));
                                 
@@ -357,8 +502,8 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, onClos
                                                     <span className="font-medium">{attendedForType}</span>
                                                 </div>
                                                 <div>
-                                                    <label className="block text-xs font-medium text-stone-500 mb-1">Remaining Classes</label>
-                                                    <input 
+                                                    <label className="block text-xs font-medium text-stone-500 mb-1">Remaining Classes (set total to attended + this)</label>
+                                                    <input
                                                         type="number"
                                                         min="0"
                                                         value={editRemainingCount}
@@ -368,20 +513,25 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, onClos
                                                     />
                                                     <p className="text-[10px] text-stone-400 mt-1 text-right">New Total: {attendedForType + editRemainingCount}</p>
                                                 </div>
+                                                {saveError && (
+                                                    <p className="text-xs text-red-600">{saveError}</p>
+                                                )}
                                                 <div className="flex gap-2 justify-end">
-                                                    <button 
-                                                        onClick={() => setEditingPackageIndex(null)}
-                                                        className="p-1.5 text-stone-500 hover:bg-stone-200 rounded"
-                                                        title="Cancel"
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => { setEditingPackageIndex(null); setSaveError(null); }}
+                                                        disabled={isSaving}
+                                                        className="px-3 py-1.5 text-sm text-stone-600 bg-white border border-cream-border rounded-md hover:bg-stone-50 disabled:opacity-50"
                                                     >
-                                                        <XCircle className="w-5 h-5" />
+                                                        Cancel
                                                     </button>
-                                                    <button 
+                                                    <button
+                                                        type="button"
                                                         onClick={() => savePackageEdit(idx, attendedForType)}
-                                                        className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded"
-                                                        title="Save"
+                                                        disabled={isSaving}
+                                                        className="px-3 py-1.5 text-sm text-white bg-emerald-600 hover:bg-emerald-700 rounded-md disabled:opacity-50"
                                                     >
-                                                        <Save className="w-5 h-5" />
+                                                        {isSaving ? 'Saving…' : 'Save'}
                                                     </button>
                                                 </div>
                                             </div>
@@ -600,38 +750,332 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, onClos
                 </div>
             ) : (
                 <div className="space-y-4">
-                    <h3 className="font-semibold text-stone-800">Recent Sessions</h3>
-                    {studentSessions.length === 0 && <p className="text-sm text-stone-400">No session history found.</p>}
-                    {studentSessions.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(session => {
-                        const myStatus = session.studentStatuses?.find(s => s.studentId === student.id)?.status || session.status;
-                        return (
-                            <div key={session.id} className="bg-white p-4 rounded-2xl border border-cream-border shadow-sm flex items-start gap-4">
-                                <div className="p-2 bg-cream rounded-lg text-center min-w-[3.5rem]">
-                                    <p className="text-xs font-bold text-stone-500 uppercase">{new Date(session.date).toLocaleDateString('en-US', { month: 'short' })}</p>
-                                    <p className="text-lg font-bold text-stone-800">{new Date(session.date).getDate()}</p>
-                                </div>
-                                <div>
-                                    <div className="flex items-center gap-2">
-                                        <h4 className="font-medium text-stone-800">{session.topic}</h4>
-                                        <span className={`text-[10px] px-2 py-0.5 rounded-full border ${session.type === ClassType.OneOnOne ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-orange-50 text-orange-700 border-orange-100'}`}>
-                                            {session.type}
-                                        </span>
+                    {/* Sub-tabs */}
+                    <div className="flex gap-1 bg-cream p-1 rounded-lg w-fit">
+                        <button
+                            onClick={() => setHistoryTab('classes')}
+                            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${historyTab === 'classes' ? 'bg-white text-stone-800 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
+                        >
+                            Class History
+                        </button>
+                        <button
+                            onClick={() => setHistoryTab('purchases')}
+                            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${historyTab === 'purchases' ? 'bg-white text-stone-800 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
+                        >
+                            Purchase History
+                        </button>
+                    </div>
+
+                    {historyTab === 'classes' ? (
+                        <div className="space-y-3">
+                            {studentSessions.length === 0 && <p className="text-sm text-stone-400">No session history found.</p>}
+                            {studentSessions.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(session => {
+                                const myStatus = session.studentStatuses?.find(s => s.studentId === student.id)?.status || session.status;
+                                const lessonNum = lessonNumberMap.get(session.id);
+                                const pkgIndex = lessonNum ? Math.floor((lessonNum - 1) / PACKAGE_SIZE) + 1 : null;
+                                const inPkgIndex = lessonNum ? ((lessonNum - 1) % PACKAGE_SIZE) + 1 : null;
+                                const isEditing = editingSessionId === session.id && editSessionData;
+                                if (isEditing && editSessionData) {
+                                    const editStatus = editSessionData.studentStatuses?.find(s => s.studentId === student.id)?.status || editSessionData.status;
+                                    const dateValue = new Date(editSessionData.date).toISOString().slice(0, 16);
+                                    return (
+                                        <div key={session.id} className="bg-white p-4 rounded-2xl border border-coral-200 shadow-sm space-y-3">
+                                            <div className="flex items-center justify-between">
+                                                <h4 className="text-sm font-semibold text-stone-800">Edit Session</h4>
+                                                <button onClick={cancelEditSession} className="p-1 text-stone-400 hover:text-stone-600"><X className="w-4 h-4" /></button>
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-3">
+                                                <div>
+                                                    <label className="block text-[10px] uppercase font-bold text-stone-500 mb-1">Date & Time</label>
+                                                    <input
+                                                        type="datetime-local"
+                                                        value={dateValue}
+                                                        onChange={e => setEditSessionData({ ...editSessionData, date: new Date(e.target.value).toISOString() })}
+                                                        className="w-full p-2 rounded-md border text-xs"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="block text-[10px] uppercase font-bold text-stone-500 mb-1">Type</label>
+                                                    <select
+                                                        value={editSessionData.type}
+                                                        onChange={e => setEditSessionData({ ...editSessionData, type: e.target.value as ClassType })}
+                                                        className="w-full p-2 rounded-md border text-xs"
+                                                    >
+                                                        <option value={ClassType.OneOnOne}>One-on-One</option>
+                                                        <option value={ClassType.Group}>One-on-Two</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <label className="block text-[10px] uppercase font-bold text-stone-500 mb-1">Topic</label>
+                                                <input
+                                                    type="text"
+                                                    value={editSessionData.topic}
+                                                    onChange={e => setEditSessionData({ ...editSessionData, topic: e.target.value })}
+                                                    className="w-full p-2 rounded-md border text-xs"
+                                                />
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-3">
+                                                <div>
+                                                    <label className="block text-[10px] uppercase font-bold text-stone-500 mb-1">My Status</label>
+                                                    <select
+                                                        value={editStatus}
+                                                        onChange={e => updateEditSessionStudentStatus(e.target.value as AttendanceStatus)}
+                                                        className="w-full p-2 rounded-md border text-xs"
+                                                    >
+                                                        <option value={AttendanceStatus.Present}>Present</option>
+                                                        <option value={AttendanceStatus.Late}>Late</option>
+                                                        <option value={AttendanceStatus.Absent}>Absent</option>
+                                                        <option value={AttendanceStatus.Cancelled}>Cancelled</option>
+                                                    </select>
+                                                </div>
+                                                <div className="flex items-end">
+                                                    <label className="flex items-center gap-2 text-xs text-stone-700">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={!!editSessionData.isTrial}
+                                                            onChange={e => setEditSessionData({ ...editSessionData, isTrial: e.target.checked })}
+                                                            className="rounded"
+                                                        />
+                                                        Trial lesson
+                                                    </label>
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <label className="block text-[10px] uppercase font-bold text-stone-500 mb-1">Notes</label>
+                                                <textarea
+                                                    value={editSessionData.notes}
+                                                    onChange={e => setEditSessionData({ ...editSessionData, notes: e.target.value })}
+                                                    rows={2}
+                                                    className="w-full p-2 rounded-md border text-xs"
+                                                />
+                                            </div>
+                                            {saveError && <p className="text-xs text-red-600">{saveError}</p>}
+                                            <div className="flex justify-end gap-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={cancelEditSession}
+                                                    disabled={isSaving}
+                                                    className="px-3 py-1.5 text-xs text-stone-600 bg-white border border-cream-border rounded-md hover:bg-stone-50 disabled:opacity-50"
+                                                >Cancel</button>
+                                                <button
+                                                    type="button"
+                                                    onClick={saveEditSession}
+                                                    disabled={isSaving}
+                                                    className="px-3 py-1.5 text-xs text-white bg-emerald-600 hover:bg-emerald-700 rounded-md disabled:opacity-50"
+                                                >{isSaving ? 'Saving…' : 'Save'}</button>
+                                            </div>
+                                        </div>
+                                    );
+                                }
+                                return (
+                                    <div key={session.id} className="bg-white p-4 rounded-2xl border border-cream-border shadow-sm flex items-start gap-4">
+                                        <div className="p-2 bg-cream rounded-lg text-center min-w-[3.5rem]">
+                                            <p className="text-xs font-bold text-stone-500 uppercase">{new Date(session.date).toLocaleDateString('en-US', { month: 'short' })}</p>
+                                            <p className="text-lg font-bold text-stone-800">{new Date(session.date).getDate()}</p>
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                {session.isTrial ? (
+                                                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200">TRIAL</span>
+                                                ) : lessonNum ? (
+                                                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-stone-900 text-white" title={`Lesson ${inPkgIndex} of package ${pkgIndex} · #${lessonNum} overall`}>
+                                                        Lesson {inPkgIndex}{pkgIndex && pkgIndex > 1 ? ` · Pkg ${pkgIndex}` : ''}
+                                                    </span>
+                                                ) : null}
+                                                <h4 className="font-medium text-stone-800">{session.topic}</h4>
+                                                <span className={`text-[10px] px-2 py-0.5 rounded-full border ${session.type === ClassType.OneOnOne ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-orange-50 text-orange-700 border-orange-100'}`}>
+                                                    {session.type}
+                                                </span>
+                                            </div>
+                                            {session.notes && <p className="text-xs text-stone-500 mt-1">{session.notes}</p>}
+                                            <span className={`inline-block mt-2 text-xs px-2 py-0.5 rounded-full ${
+                                                myStatus === AttendanceStatus.Present ? 'bg-emerald-100 text-emerald-700' :
+                                                myStatus === AttendanceStatus.Late ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'
+                                            }`}>
+                                                {myStatus}
+                                            </span>
+                                        </div>
+                                        <div className="flex flex-col gap-1">
+                                            {onUpdateSession && (
+                                                <button
+                                                    onClick={() => startEditSession(session)}
+                                                    className="p-1 text-stone-300 hover:text-coral-600 hover:bg-coral-50 rounded transition-colors"
+                                                    title="Edit Session"
+                                                >
+                                                    <Edit2 className="w-3.5 h-3.5" />
+                                                </button>
+                                            )}
+                                            {onDeleteSession && (
+                                                <button
+                                                    onClick={() => setConfirmDelete({ kind: 'session', id: session.id, label: `${session.topic} on ${new Date(session.date).toLocaleDateString()}` })}
+                                                    className="p-1 text-stone-300 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                                                    title="Delete Session"
+                                                >
+                                                    <Trash2 className="w-3.5 h-3.5" />
+                                                </button>
+                                            )}
+                                        </div>
                                     </div>
-                                    <p className="text-xs text-stone-500 mt-1">{session.notes}</p>
-                                    <span className={`inline-block mt-2 text-xs px-2 py-0.5 rounded-full ${
-                                        myStatus === AttendanceStatus.Present ? 'bg-emerald-100 text-emerald-700' : 
-                                        myStatus === AttendanceStatus.Late ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'
-                                    }`}>
-                                        {myStatus}
-                                    </span>
-                                </div>
-                            </div>
-                        );
-                    })}
+                                );
+                            })}
+                        </div>
+                    ) : (
+                        <div className="space-y-3">
+                            {(() => {
+                                const studentPayments = (payments || [])
+                                    .filter(p => p.studentId === student.id)
+                                    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+                                const totalPaid = studentPayments.reduce((sum, p) => sum + p.amount, 0);
+                                if (studentPayments.length === 0) {
+                                    return <p className="text-sm text-stone-400">No purchases recorded.</p>;
+                                }
+                                return (
+                                    <>
+                                        <div className="bg-cream p-3 rounded-lg border border-cream-border flex justify-between items-center">
+                                            <span className="text-xs font-medium text-stone-500 uppercase">Total Paid</span>
+                                            <span className="text-sm font-semibold text-stone-800">{formatMoney(totalPaid, currency, rate)}</span>
+                                        </div>
+                                        {studentPayments.map(payment => {
+                                            const isEditing = editingPaymentId === payment.id && editPaymentData;
+                                            if (isEditing && editPaymentData) {
+                                                const dateValue = new Date(editPaymentData.date).toISOString().slice(0, 10);
+                                                return (
+                                                    <div key={payment.id} className="bg-white p-4 rounded-2xl border border-coral-200 shadow-sm space-y-3">
+                                                        <div className="flex items-center justify-between">
+                                                            <h4 className="text-sm font-semibold text-stone-800">Edit Payment</h4>
+                                                            <button onClick={cancelEditPayment} className="p-1 text-stone-400 hover:text-stone-600"><X className="w-4 h-4" /></button>
+                                                        </div>
+                                                        <div className="grid grid-cols-2 gap-3">
+                                                            <div>
+                                                                <label className="block text-[10px] uppercase font-bold text-stone-500 mb-1">Amount ({CURRENCY_SYMBOLS.CNY})</label>
+                                                                <input
+                                                                    type="number"
+                                                                    min="0"
+                                                                    value={editPaymentData.amount}
+                                                                    onChange={e => setEditPaymentData({ ...editPaymentData, amount: parseFloat(e.target.value) || 0 })}
+                                                                    className="w-full p-2 rounded-md border text-xs"
+                                                                />
+                                                            </div>
+                                                            <div>
+                                                                <label className="block text-[10px] uppercase font-bold text-stone-500 mb-1">Date</label>
+                                                                <input
+                                                                    type="date"
+                                                                    value={dateValue}
+                                                                    onChange={e => setEditPaymentData({ ...editPaymentData, date: new Date(e.target.value).toISOString() })}
+                                                                    className="w-full p-2 rounded-md border text-xs"
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                        <div>
+                                                            <label className="block text-[10px] uppercase font-bold text-stone-500 mb-1">Method / Note</label>
+                                                            <input
+                                                                type="text"
+                                                                value={editPaymentData.method || ''}
+                                                                onChange={e => setEditPaymentData({ ...editPaymentData, method: e.target.value })}
+                                                                className="w-full p-2 rounded-md border text-xs"
+                                                            />
+                                                        </div>
+                                                        {saveError && <p className="text-xs text-red-600">{saveError}</p>}
+                                                        <div className="flex justify-end gap-2">
+                                                            <button
+                                                                type="button"
+                                                                onClick={cancelEditPayment}
+                                                                disabled={isSaving}
+                                                                className="px-3 py-1.5 text-xs text-stone-600 bg-white border border-cream-border rounded-md hover:bg-stone-50 disabled:opacity-50"
+                                                            >Cancel</button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={saveEditPayment}
+                                                                disabled={isSaving}
+                                                                className="px-3 py-1.5 text-xs text-white bg-emerald-600 hover:bg-emerald-700 rounded-md disabled:opacity-50"
+                                                            >{isSaving ? 'Saving…' : 'Save'}</button>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            }
+                                            return (
+                                                <div key={payment.id} className="bg-white p-4 rounded-2xl border border-cream-border shadow-sm flex items-start gap-4">
+                                                    <div className="p-2 bg-cream rounded-lg text-center min-w-[3.5rem]">
+                                                        <p className="text-xs font-bold text-stone-500 uppercase">{new Date(payment.date).toLocaleDateString('en-US', { month: 'short' })}</p>
+                                                        <p className="text-lg font-bold text-stone-800">{new Date(payment.date).getDate()}</p>
+                                                    </div>
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="flex items-center justify-between gap-2">
+                                                            <h4 className="font-medium text-stone-800">{formatMoney(payment.amount, currency, rate)}</h4>
+                                                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">
+                                                                {payment.method || 'Payment'}
+                                                            </span>
+                                                        </div>
+                                                        <p className="text-xs text-stone-500 mt-1">{new Date(payment.date).toLocaleDateString('en-US', { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })}</p>
+                                                    </div>
+                                                    <div className="flex flex-col gap-1">
+                                                        {onSavePayment && (
+                                                            <button
+                                                                onClick={() => startEditPayment(payment)}
+                                                                className="p-1 text-stone-300 hover:text-coral-600 hover:bg-coral-50 rounded transition-colors"
+                                                                title="Edit Payment"
+                                                            >
+                                                                <Edit2 className="w-3.5 h-3.5" />
+                                                            </button>
+                                                        )}
+                                                        {onDeletePayment && (
+                                                            <button
+                                                                onClick={() => setConfirmDelete({ kind: 'payment', id: payment.id, label: `${formatMoney(payment.amount, currency, rate)} on ${new Date(payment.date).toLocaleDateString()}` })}
+                                                                className="p-1 text-stone-300 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                                                                title="Delete Payment"
+                                                            >
+                                                                <Trash2 className="w-3.5 h-3.5" />
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </>
+                                );
+                            })()}
+                        </div>
+                    )}
                 </div>
             )}
         </div>
         
+        {/* Session/Payment Delete Confirmation Pop-up */}
+        {confirmDelete && (
+            <div className="absolute inset-0 z-[60] flex items-center justify-center bg-white/50 backdrop-blur-sm p-6">
+                <div className="bg-white p-5 rounded-xl shadow-xl border border-cream-border w-full max-w-sm animate-in zoom-in-95 duration-200">
+                    <div className="flex flex-col items-center text-center">
+                        <div className="bg-red-50 p-3 rounded-full mb-3">
+                            <AlertTriangle className="w-6 h-6 text-red-600" />
+                        </div>
+                        <h4 className="font-bold text-stone-800 text-lg mb-2">
+                            Delete {confirmDelete.kind === 'session' ? 'Session' : 'Payment'}?
+                        </h4>
+                        <p className="text-sm text-stone-500 mb-2">{confirmDelete.label}</p>
+                        <p className="text-xs text-stone-400 mb-6">
+                            {confirmDelete.kind === 'session'
+                                ? 'The student balance will be restored if this session was paid.'
+                                : 'The amount will be added back to the student balance.'} This cannot be undone.
+                        </p>
+                        {saveError && <p className="text-xs text-red-600 mb-3">{saveError}</p>}
+                        <div className="flex gap-3 w-full">
+                            <button
+                                onClick={() => { setConfirmDelete(null); setSaveError(null); }}
+                                disabled={isSaving}
+                                className="flex-1 py-2 text-sm font-medium border border-cream-border rounded-lg hover:bg-cream text-stone-600 disabled:opacity-50"
+                            >Cancel</button>
+                            <button
+                                onClick={performConfirmDelete}
+                                disabled={isSaving}
+                                className="flex-1 py-2 text-sm font-medium bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+                            >{isSaving ? 'Deleting…' : 'Delete'}</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        )}
+
         {/* Delete Confirmation Pop-up */}
         {logToDelete && (
             <div className="absolute inset-0 z-[60] flex items-center justify-center bg-white/50 backdrop-blur-sm p-6">

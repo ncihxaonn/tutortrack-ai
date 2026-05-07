@@ -3,9 +3,11 @@ import { Student, ClassType, StudentStatus, ClassPackage } from '../types';
 import { Search, Plus, User, Trash2, Archive, RotateCcw, AlertTriangle } from 'lucide-react';
 import { Currency, CURRENCY_SYMBOLS, formatMoney } from '../lib/currency';
 
+export interface InitialPayment { amount: number; label: string; }
+
 interface StudentListProps {
   students: Student[];
-  onAddStudent: (student: Omit<Student, 'id' | 'joinedDate' | 'status'>) => void;
+  onAddStudent: (student: Omit<Student, 'id' | 'joinedDate' | 'status'>, initialPayments?: InitialPayment[]) => void;
   onUpdateStudent: (student: Student) => void;
   onDeleteStudent: (id: string) => void;
   onSelectStudent: (student: Student) => void;
@@ -53,6 +55,7 @@ const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpd
     const packages: ClassPackage[] = [];
     let initialBalance = 0;
     let autoNotes = "";
+    const initialPayments: InitialPayment[] = [];
 
     if (oneOnOneEnabled) {
         classTypes.push(ClassType.OneOnOne);
@@ -60,6 +63,7 @@ const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpd
         initialBalance -= oneOnOnePaid; // Credit
         if (oneOnOnePaid > 0) {
             autoNotes += `Initial Payment: ${CURRENCY_SYMBOLS.CNY}${oneOnOnePaid} for ${oneOnOneClasses} One-on-One sessions. `;
+            initialPayments.push({ amount: oneOnOnePaid, label: `Initial One-on-One package` });
         }
     }
 
@@ -69,6 +73,7 @@ const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpd
         initialBalance -= groupPaid; // Credit
         if (groupPaid > 0) {
             autoNotes += `Initial Payment: ${CURRENCY_SYMBOLS.CNY}${groupPaid} for ${groupClasses} One-on-Two sessions. `;
+            initialPayments.push({ amount: groupPaid, label: `Initial One-on-Two package` });
         }
     }
 
@@ -82,7 +87,7 @@ const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpd
         notes: finalNotes,
         balance: initialBalance,
         progressHistory: []
-    });
+    }, initialPayments);
 
     setIsAdding(false);
     resetForm();

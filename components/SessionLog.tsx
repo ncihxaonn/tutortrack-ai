@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Session, Student, AttendanceStatus, ClassType, StudentSessionStatus, SkillProgress } from '../types';
+import { Session, Student, AttendanceStatus, ClassType, StudentSessionStatus, SkillProgress, Teacher } from '../types';
 import { Calendar as CalendarIcon, Clock, CheckCircle, XCircle, AlertCircle, AlertTriangle, Sparkles, ChevronLeft, ChevronRight, X, Edit, Trash2, Search, ChevronDown, ChevronUp, MoreVertical, TrendingUp, LayoutGrid, List } from 'lucide-react';
 import { generateLessonPlan } from '../services/geminiService';
 import { PRICE_1ON1, PRICE_GROUP } from '../constants';
@@ -7,16 +7,17 @@ import { PRICE_1ON1, PRICE_GROUP } from '../constants';
 interface SessionLogProps {
   sessions: Session[];
   students: Student[];
+  teachers: Teacher[];
   onAddSession: (session: Omit<Session, 'id'>) => void;
   onUpdateSession: (session: Session) => void;
   onDeleteSession: (id: string) => void;
-  onUpdateStudent: (student: Student) => void; 
+  onUpdateStudent: (student: Student) => void;
   onSelectStudent?: (student: Student) => void;
 }
 
 type ViewMode = 'year' | 'month' | 'week';
 
-const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSession, onUpdateSession, onDeleteSession, onUpdateStudent, onSelectStudent }) => {
+const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, onAddSession, onUpdateSession, onDeleteSession, onUpdateStudent, onSelectStudent }) => {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewMode, setViewMode] = useState<ViewMode>('month');
   
@@ -35,6 +36,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
   const [sessionType, setSessionType] = useState<ClassType>(ClassType.OneOnOne);
   const [notes, setNotes] = useState('');
   const [isTrial, setIsTrial] = useState(false);
+  const [teacherId, setTeacherId] = useState<string>('');
   
   // Progress Editing State
   const [progressModalOpen, setProgressModalOpen] = useState(false);
@@ -138,6 +140,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
     setSessionType(session.type);
     setNotes(session.notes);
     setIsTrial(!!session.isTrial);
+    setTeacherId(session.teacherId || '');
     setGeneratedPlan('');
     setTempProgress({});
     setIsModalOpen(true);
@@ -236,7 +239,8 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
       topic,
       notes: generatedPlan ? `${notes}\n\n--- AI Plan ---\n${generatedPlan}` : notes,
       price: totalPrice,
-      isTrial
+      isTrial,
+      teacherId: teacherId || undefined
     };
 
     if (editingSessionId) {
@@ -302,6 +306,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
     setTempProgress({});
     setCurrentProgressStudentId(null);
     setIsTrial(false);
+    setTeacherId('');
   };
 
   // --- Renderers ---
@@ -359,6 +364,10 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
                                     </div>
                                     <div className="text-xs opacity-75">
                                         {new Date(session.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                        {session.teacherId && (() => {
+                                            const t = teachers.find(tt => tt.id === session.teacherId);
+                                            return t ? <span className="ml-1">· {t.name.split(' ')[0]}</span> : null;
+                                        })()}
                                     </div>
                                     <div className="truncate opacity-75">
                                         {session.studentIds.map(sid => students.find(s => s.id === sid)?.name.split(' ')[0]).join(', ')}
@@ -585,6 +594,23 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, onAddSessio
                                 <option value={ClassType.OneOnOne}>One-on-One</option>
                                 <option value={ClassType.Group}>One-on-Two (Group)</option>
                             </select>
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-medium text-stone-700 mb-1">Teacher</label>
+                            <select
+                                value={teacherId}
+                                onChange={e => setTeacherId(e.target.value)}
+                                className="w-full p-2 border rounded-md"
+                            >
+                                <option value="">— Unassigned —</option>
+                                {teachers.filter(t => t.status === 'Active').map(t => (
+                                    <option key={t.id} value={t.id}>{t.name}</option>
+                                ))}
+                            </select>
+                            {teachers.length === 0 && (
+                                <p className="text-[11px] text-stone-400 mt-1">No teachers yet. Add some on the Teachers page.</p>
+                            )}
                         </div>
 
                         <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${isTrial ? 'bg-amber-50 border-amber-300' : 'bg-cream border-cream-border hover:bg-cream-soft'}`}>

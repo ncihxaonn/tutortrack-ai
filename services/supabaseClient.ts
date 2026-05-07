@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { Student, Session, Payment, ClassType } from '../types';
+import { Student, Session, Payment, ClassType, Teacher } from '../types';
 
 const url = process.env.SUPABASE_URL as string;
 const key = process.env.SUPABASE_ANON_KEY as string;
@@ -34,6 +34,17 @@ type SessionRow = {
   notes: string;
   price: number;
   is_trial: boolean;
+  teacher_id: string | null;
+};
+
+type TeacherRow = {
+  id: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  notes: string;
+  joined_date: string;
+  status: 'Active' | 'Archived';
 };
 
 type PaymentRow = {
@@ -83,7 +94,8 @@ const toSession = (r: SessionRow): Session => ({
   topic: r.topic,
   notes: r.notes,
   price: Number(r.price) || 0,
-  isTrial: r.is_trial || false
+  isTrial: r.is_trial || false,
+  teacherId: r.teacher_id ?? undefined
 });
 
 const fromSession = (s: Session) => ({
@@ -97,7 +109,28 @@ const fromSession = (s: Session) => ({
   topic: s.topic,
   notes: s.notes,
   price: s.price,
-  is_trial: !!s.isTrial
+  is_trial: !!s.isTrial,
+  teacher_id: s.teacherId ?? null
+});
+
+const toTeacher = (r: TeacherRow): Teacher => ({
+  id: r.id,
+  name: r.name,
+  email: r.email ?? undefined,
+  phone: r.phone ?? undefined,
+  notes: r.notes ?? '',
+  joinedDate: r.joined_date,
+  status: r.status
+});
+
+const fromTeacher = (t: Teacher) => ({
+  id: t.id,
+  name: t.name,
+  email: t.email ?? null,
+  phone: t.phone ?? null,
+  notes: t.notes,
+  joined_date: t.joinedDate,
+  status: t.status
 });
 
 const toPayment = (r: PaymentRow): Payment => ({
@@ -117,18 +150,21 @@ const fromPayment = (p: Payment) => ({
 });
 
 export async function fetchAll() {
-  const [s, ss, p] = await Promise.all([
+  const [s, ss, p, t] = await Promise.all([
     supabase.from('students').select('*'),
     supabase.from('sessions').select('*'),
-    supabase.from('payments').select('*')
+    supabase.from('payments').select('*'),
+    supabase.from('teachers').select('*')
   ]);
   if (s.error) throw s.error;
   if (ss.error) throw ss.error;
   if (p.error) throw p.error;
+  if (t.error) throw t.error;
   return {
     students: (s.data as StudentRow[]).map(toStudent),
     sessions: (ss.data as SessionRow[]).map(toSession),
-    payments: (p.data as PaymentRow[]).map(toPayment)
+    payments: (p.data as PaymentRow[]).map(toPayment),
+    teachers: (t.data as TeacherRow[]).map(toTeacher)
   };
 }
 
@@ -152,3 +188,9 @@ export const updatePayment = (p: Payment) =>
 
 export const deletePayment = (id: string) =>
   supabase.from('payments').delete().eq('id', id).then(r => { if (r.error) throw r.error; });
+
+export const upsertTeacher = (t: Teacher) =>
+  supabase.from('teachers').upsert(fromTeacher(t)).then(r => { if (r.error) throw r.error; });
+
+export const deleteTeacher = (id: string) =>
+  supabase.from('teachers').delete().eq('id', id).then(r => { if (r.error) throw r.error; });

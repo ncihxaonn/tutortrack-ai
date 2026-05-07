@@ -1,12 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import { LayoutDashboard, Users, Calendar, Menu, X, BookOpen, Loader2 } from 'lucide-react';
+import { LayoutDashboard, Users, Calendar, Menu, X, BookOpen, GraduationCap, Lock } from 'lucide-react';
 import PasswordGate, { isAuthenticated } from './components/PasswordGate';
 import Dashboard from './components/Dashboard';
+import Admin from './components/Admin';
+import AdminGate, { isAdminAuthenticated } from './components/AdminGate';
 import StudentList from './components/StudentList';
 import SessionLog from './components/SessionLog';
 import StudentDetail from './components/StudentDetail';
-import { TabItem, Student, Session, Payment, AttendanceStatus } from './types';
-import { Currency, BASE_CURRENCY, fetchRate, CURRENCY_LABELS } from './lib/currency';
+import TeacherList from './components/TeacherList';
+import { TabItem, Student, Session, Payment, AttendanceStatus, Teacher } from './types';
+import { Currency, BASE_CURRENCY, fetchRate } from './lib/currency';
 import {
   fetchAll,
   upsertStudent as dbUpsertStudent,
@@ -15,14 +18,18 @@ import {
   deleteSession as dbDeleteSession,
   insertPayment as dbInsertPayment,
   updatePayment as dbUpdatePayment,
-  deletePayment as dbDeletePayment
+  deletePayment as dbDeletePayment,
+  upsertTeacher as dbUpsertTeacher,
+  deleteTeacher as dbDeleteTeacher
 } from './services/supabaseClient';
 
 const App: React.FC = () => {
   const [unlocked, setUnlocked] = useState(isAuthenticated);
-
   if (!unlocked) return <PasswordGate onUnlock={() => setUnlocked(true)} />;
+  return <AppInner />;
+};
 
+const AppInner: React.FC = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
@@ -30,8 +37,23 @@ const App: React.FC = () => {
   const [students, setStudents] = useState<Student[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
+  const [teachers, setTeachers] = useState<Teacher[]>([]);
+  const [adminUnlocked, setAdminUnlocked] = useState<boolean>(isAdminAuthenticated);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+
+  // Helper: wrap any async sync op so errors become a visible banner instead of silently failing.
+  const withSync = async <T,>(label: string, op: () => PromiseLike<T>): Promise<T> => {
+    try {
+      setSyncError(null);
+      return await op();
+    } catch (e: any) {
+      const msg = `${label} failed: ${e?.message ?? String(e)}`;
+      setSyncError(msg);
+      throw e;
+    }
+  };
 
   // Currency display: base is CNY; toggle to AUD using a live exchange rate.
   const [currency, setCurrency] = useState<Currency>(BASE_CURRENCY);
@@ -42,10 +64,11 @@ const App: React.FC = () => {
 
   useEffect(() => {
     fetchAll()
-      .then(({ students, sessions, payments }) => {
+      .then(({ students, sessions, payments, teachers }) => {
         setStudents(students);
         setSessions(sessions);
         setPayments(payments);
+        setTeachers(teachers);
       })
       .catch(e => setLoadError(e.message ?? 'Failed to load data'))
       .finally(() => setLoading(false));
@@ -83,22 +106,39 @@ const App: React.FC = () => {
   const tabs: TabItem[] = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'students', label: 'Students', icon: Users },
+    { id: 'teachers', label: 'Teachers', icon: GraduationCap },
     { id: 'sessions', label: 'Calendar', icon: Calendar },
+    { id: 'admin', label: 'Admin', icon: Lock },
   ];
 
-  const handleAddStudent = async (newStudentData: Omit<Student, 'id' | 'joinedDate' | 'status'>) => {
+  const handleAddStudent = async (
+    newStudentData: Omit<Student, 'id' | 'joinedDate' | 'status'>,
+    initialPayments?: { amount: number; label: string }[]
+  ) => {
     const newStudent: Student = {
       ...newStudentData,
       id: `s${Date.now()}`,
       joinedDate: new Date().toISOString(),
       status: 'Active'
     };
-    await dbUpsertStudent(newStudent);
+    await withSync('Add student', () => dbUpsertStudent(newStudent));
     setStudents(prev => [...prev, newStudent]);
+
+    if (initialPayments && initialPayments.length > 0) {
+      const newPayments: Payment[] = initialPayments.map((ip, i) => ({
+        id: `p${Date.now()}-${i}`,
+        studentId: newStudent.id,
+        amount: ip.amount,
+        date: newStudent.joinedDate,
+        method: ip.label
+      }));
+      await withSync('Record initial payments', () => Promise.all(newPayments.map(dbInsertPayment)));
+      setPayments(prev => [...prev, ...newPayments]);
+    }
   };
 
   const handleUpdateStudent = async (updatedStudent: Student) => {
-    await dbUpsertStudent(updatedStudent);
+    await withSync('Update student', () => dbUpsertStudent(updatedStudent));
     setStudents(prev => prev.map(s => s.id === updatedStudent.id ? updatedStudent : s));
     if (selectedStudent?.id === updatedStudent.id) {
       setSelectedStudent(updatedStudent);
@@ -106,7 +146,7 @@ const App: React.FC = () => {
   };
 
   const handleDeleteStudent = async (id: string) => {
-    await dbDeleteStudent(id);
+    await withSync('Delete student', () => dbDeleteStudent(id));
     setStudents(prev => prev.filter(s => s.id !== id));
     if (selectedStudent?.id === id) setSelectedStudent(null);
   };
@@ -128,12 +168,12 @@ const App: React.FC = () => {
       return student;
     });
     setStudents(nextStudents);
-    await Promise.all(updates.map(dbUpsertStudent));
+    await withSync('Update balances', () => Promise.all(updates.map(dbUpsertStudent)));
   };
 
   const handleAddSession = async (newSessionData: Omit<Session, 'id'>) => {
     const newSession: Session = { ...newSessionData, id: `sess${Date.now()}` };
-    await dbUpsertSession(newSession);
+    await withSync('Add session', () => dbUpsertSession(newSession));
     setSessions(prev => [...prev, newSession]);
     await applyBalanceChanges(newSession, 'add');
   };
@@ -141,7 +181,7 @@ const App: React.FC = () => {
   const handleUpdateSession = async (updatedSession: Session) => {
     const oldSession = sessions.find(s => s.id === updatedSession.id);
     if (oldSession) await applyBalanceChanges(oldSession, 'remove');
-    await dbUpsertSession(updatedSession);
+    await withSync('Update session', () => dbUpsertSession(updatedSession));
     setSessions(prev => prev.map(s => s.id === updatedSession.id ? updatedSession : s));
     await applyBalanceChanges(updatedSession, 'add');
   };
@@ -150,7 +190,7 @@ const App: React.FC = () => {
     const session = sessions.find(s => s.id === sessionId);
     if (!session) return;
     await applyBalanceChanges(session, 'remove');
-    await dbDeleteSession(sessionId);
+    await withSync('Delete session', () => dbDeleteSession(sessionId));
     setSessions(prev => prev.filter(s => s.id !== sessionId));
   };
 
@@ -165,8 +205,10 @@ const App: React.FC = () => {
     const target = students.find(s => s.id === studentId);
     if (!target) return;
     const updatedStudent = { ...target, balance: target.balance - amount };
-    await dbInsertPayment(newPayment);
-    await dbUpsertStudent(updatedStudent);
+    await withSync('Save payment', async () => {
+      await dbInsertPayment(newPayment);
+      await dbUpsertStudent(updatedStudent);
+    });
     setPayments(prev => [...prev, newPayment]);
     setStudents(prev => prev.map(s => s.id === studentId ? updatedStudent : s));
     if (selectedStudent?.id === studentId) setSelectedStudent(updatedStudent);
@@ -175,7 +217,7 @@ const App: React.FC = () => {
   const handleUpdatePayment = async (updated: Payment) => {
     const original = payments.find(p => p.id === updated.id);
     if (!original) return;
-    await dbUpdatePayment(updated);
+    await withSync('Update payment', () => dbUpdatePayment(updated));
     setPayments(prev => prev.map(p => p.id === updated.id ? updated : p));
     if (original.amount !== updated.amount || original.studentId !== updated.studentId) {
       const delta = updated.amount - original.amount;
@@ -189,7 +231,7 @@ const App: React.FC = () => {
       });
       const changed = nextStudents.filter((s, i) => s !== students[i]);
       setStudents(nextStudents);
-      await Promise.all(changed.map(dbUpsertStudent));
+      await withSync('Update student balances', () => Promise.all(changed.map(dbUpsertStudent)));
       if (selectedStudent) {
         const refreshed = nextStudents.find(s => s.id === selectedStudent.id);
         if (refreshed) setSelectedStudent(refreshed);
@@ -200,15 +242,37 @@ const App: React.FC = () => {
   const handleDeletePayment = async (id: string) => {
     const payment = payments.find(p => p.id === id);
     if (!payment) return;
-    await dbDeletePayment(id);
+    await withSync('Delete payment', () => dbDeletePayment(id));
     setPayments(prev => prev.filter(p => p.id !== id));
     const target = students.find(s => s.id === payment.studentId);
     if (target) {
       const restored = { ...target, balance: target.balance + payment.amount };
-      await dbUpsertStudent(restored);
+      await withSync('Restore balance', () => dbUpsertStudent(restored));
       setStudents(prev => prev.map(s => s.id === restored.id ? restored : s));
       if (selectedStudent?.id === restored.id) setSelectedStudent(restored);
     }
+  };
+
+  const handleAddTeacher = async (data: Omit<Teacher, 'id' | 'joinedDate' | 'status'>) => {
+    const newTeacher: Teacher = {
+      ...data,
+      id: `t${Date.now()}`,
+      joinedDate: new Date().toISOString().split('T')[0],
+      status: 'Active'
+    };
+    await withSync('Add teacher', () => dbUpsertTeacher(newTeacher));
+    setTeachers(prev => [...prev, newTeacher]);
+  };
+
+  const handleUpdateTeacher = async (t: Teacher) => {
+    await withSync('Update teacher', () => dbUpsertTeacher(t));
+    setTeachers(prev => prev.map(x => x.id === t.id ? t : x));
+  };
+
+  const handleDeleteTeacher = async (id: string) => {
+    await withSync('Delete teacher', () => dbDeleteTeacher(id));
+    setTeachers(prev => prev.filter(t => t.id !== id));
+    setSessions(prev => prev.map(s => s.teacherId === id ? { ...s, teacherId: undefined } : s));
   };
 
   if (loading) {
@@ -220,6 +284,19 @@ const App: React.FC = () => {
 
   return (
     <div className="flex min-h-screen bg-cream text-stone-900 font-sans">
+      {syncError && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] max-w-md w-[90%] bg-red-50 border border-red-300 text-red-800 px-4 py-3 rounded-lg shadow-lg flex items-start gap-3">
+          <div className="flex-1 text-sm">
+            <p className="font-semibold">Sync error — your change didn't save</p>
+            <p className="text-xs mt-0.5 break-words">{syncError}</p>
+          </div>
+          <button
+            onClick={() => setSyncError(null)}
+            className="text-red-400 hover:text-red-600 text-xl leading-none"
+            aria-label="Dismiss"
+          >×</button>
+        </div>
+      )}
       <aside className="hidden md:flex flex-col w-64 bg-white border-r border-cream-border fixed h-full z-10">
         <div className="p-6 border-b border-cream-border flex items-center gap-2">
           <div className="bg-coral-600 p-2 rounded-lg">
@@ -248,33 +325,6 @@ const App: React.FC = () => {
             );
           })}
         </nav>
-        <div className="p-4 border-t border-cream-border">
-          <p className="text-[10px] uppercase font-semibold text-stone-400 mb-2 tracking-wider">Currency</p>
-          <button
-            onClick={toggleCurrency}
-            disabled={rateLoading}
-            className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-cream border border-cream-border hover:border-coral-200 hover:bg-coral-50 transition-colors text-sm font-medium text-stone-700 disabled:opacity-60"
-            title={currency === 'CNY' ? 'Switch to Australian Dollar' : 'Switch to Chinese Yuan'}
-          >
-            <span className="flex items-center gap-2">
-              <span className={`inline-block w-7 text-center rounded text-xs px-1 py-0.5 ${currency === 'CNY' ? 'bg-coral-600 text-white' : 'bg-stone-200 text-stone-600'}`}>¥</span>
-              <span>/</span>
-              <span className={`inline-block w-7 text-center rounded text-xs px-1 py-0.5 ${currency === 'AUD' ? 'bg-coral-600 text-white' : 'bg-stone-200 text-stone-600'}`}>A$</span>
-            </span>
-            <span className="flex items-center gap-1 text-xs text-stone-500">
-              {rateLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : CURRENCY_LABELS[currency]}
-            </span>
-          </button>
-          {currency !== BASE_CURRENCY && !rateLoading && !rateError && (
-            <p className="text-[10px] text-stone-400 mt-1.5 leading-tight">
-              ¥1 = A${rate.toFixed(4)}
-              {rateFetchedAt && <> · {rateFetchedAt.toLocaleDateString()}</>}
-            </p>
-          )}
-          {rateError && (
-            <p className="text-[10px] text-red-500 mt-1.5 leading-tight">Rate unavailable: {rateError}</p>
-          )}
-        </div>
       </aside>
 
       <div className="md:hidden fixed top-0 left-0 right-0 bg-white border-b border-cream-border z-20 px-4 py-3 flex justify-between items-center shadow-sm">
@@ -309,20 +359,6 @@ const App: React.FC = () => {
                 </button>
               );
             })}
-            <button
-              onClick={toggleCurrency}
-              disabled={rateLoading}
-              className="w-full flex items-center justify-between gap-3 px-4 py-4 text-base font-medium rounded-xl bg-cream border border-cream-border"
-            >
-              <span className="flex items-center gap-2 text-stone-700">
-                <span className={`inline-block w-8 text-center rounded text-sm px-1.5 py-0.5 ${currency === 'CNY' ? 'bg-coral-600 text-white' : 'bg-stone-200 text-stone-600'}`}>¥</span>
-                <span>/</span>
-                <span className={`inline-block w-8 text-center rounded text-sm px-1.5 py-0.5 ${currency === 'AUD' ? 'bg-coral-600 text-white' : 'bg-stone-200 text-stone-600'}`}>A$</span>
-              </span>
-              <span className="text-sm text-stone-500 flex items-center gap-1">
-                {rateLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : CURRENCY_LABELS[currency]}
-              </span>
-            </button>
           </nav>
         </div>
       )}
@@ -339,12 +375,27 @@ const App: React.FC = () => {
           <Dashboard
             students={students}
             sessions={sessions}
-            payments={payments}
-            onUpdatePayment={handleUpdatePayment}
-            onDeletePayment={handleDeletePayment}
-            currency={currency}
-            rate={rate}
           />
+        )}
+
+        {activeTab === 'admin' && (
+          adminUnlocked ? (
+            <Admin
+              students={students}
+              payments={payments}
+              onUpdatePayment={handleUpdatePayment}
+              onDeletePayment={handleDeletePayment}
+              currency={currency}
+              rate={rate}
+              rateLoading={rateLoading}
+              rateError={rateError}
+              rateFetchedAt={rateFetchedAt}
+              onToggleCurrency={toggleCurrency}
+              onLock={() => setAdminUnlocked(false)}
+            />
+          ) : (
+            <AdminGate onUnlock={() => setAdminUnlocked(true)} />
+          )
         )}
 
         {activeTab === 'students' && (
@@ -359,10 +410,21 @@ const App: React.FC = () => {
           />
         )}
 
+        {activeTab === 'teachers' && (
+          <TeacherList
+            teachers={teachers}
+            sessions={sessions}
+            onAddTeacher={handleAddTeacher}
+            onUpdateTeacher={handleUpdateTeacher}
+            onDeleteTeacher={handleDeleteTeacher}
+          />
+        )}
+
         {activeTab === 'sessions' && (
           <SessionLog
             sessions={sessions}
             students={students}
+            teachers={teachers}
             onAddSession={handleAddSession}
             onUpdateSession={handleUpdateSession}
             onDeleteSession={handleDeleteSession}
@@ -380,6 +442,12 @@ const App: React.FC = () => {
           onClose={() => setSelectedStudent(null)}
           onUpdatePayment={handlePayment}
           onUpdateStudent={handleUpdateStudent}
+          onUpdateSession={handleUpdateSession}
+          onDeleteSession={handleDeleteSession}
+          onSavePayment={handleUpdatePayment}
+          onDeletePayment={handleDeletePayment}
+          currency={currency}
+          rate={rate}
         />
       )}
     </div>
