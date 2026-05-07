@@ -47,6 +47,7 @@ export interface Student {
 export interface StudentSessionStatus {
   studentId: string;
   status: AttendanceStatus;
+  isTrial?: boolean; // per-student override of session-level isTrial; used for mixed group sessions
 }
 
 export interface Session {

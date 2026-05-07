@@ -152,13 +152,15 @@ const AppInner: React.FC = () => {
   };
 
   const applyBalanceChanges = async (session: Session, action: 'add' | 'remove') => {
-    if (session.isTrial) return;
     const multiplier = action === 'add' ? 1 : -1;
     const updates: Student[] = [];
     const nextStudents = students.map(student => {
       if (!session.studentIds.includes(student.id)) return student;
       const statusObj = session.studentStatuses?.find(s => s.studentId === student.id);
       const status = statusObj ? statusObj.status : session.status;
+      // Per-student trial overrides session-level. Trials never charge.
+      const isTrialHere = typeof statusObj?.isTrial === 'boolean' ? statusObj.isTrial : !!session.isTrial;
+      if (isTrialHere) return student;
       const cost = session.price / session.studentIds.length;
       if (status === AttendanceStatus.Present || status === AttendanceStatus.Late) {
         const updated = { ...student, balance: student.balance + (cost * multiplier) };

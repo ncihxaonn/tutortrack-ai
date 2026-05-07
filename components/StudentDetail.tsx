@@ -4,6 +4,7 @@ import { X, Sparkles, PlusCircle, Edit2, Save, XCircle, TrendingUp, Activity, Fi
 import { generateStudentReport } from '../services/geminiService';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { CURRENCY_SYMBOLS, Currency, formatMoney } from '../lib/currency';
+import { isTrialForStudent } from '../lib/sessionHelpers';
 
 interface StudentDetailProps {
   student: Student;
@@ -76,7 +77,7 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
     const counters: Record<string, number> = {};
     const ascSessions = [...studentSessions].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
     for (const s of ascSessions) {
-      if (s.isTrial) continue;
+      if (isTrialForStudent(s, student.id)) continue;
       const myStatus = s.studentStatuses?.find(ss => ss.studentId === student.id)?.status || s.status;
       if (myStatus !== AttendanceStatus.Present) continue;
       counters[s.type] = (counters[s.type] || 0) + 1;
@@ -476,7 +477,7 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
                         <div className="space-y-3">
                             {student.packages.map((pkg, idx) => {
                                 // Trials don't consume package classes
-                                const attendedForType = studentSessions.filter(s => s.type === pkg.type && s.status === AttendanceStatus.Present && !s.isTrial).length;
+                                const attendedForType = studentSessions.filter(s => s.type === pkg.type && s.status === AttendanceStatus.Present && !isTrialForStudent(s, student.id)).length;
                                 const isEditing = editingPackageIndex === idx;
                                 const progress = Math.min(100, Math.round((attendedForType / pkg.total) * 100));
                                 
@@ -771,6 +772,7 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
                             {studentSessions.length === 0 && <p className="text-sm text-stone-400">No session history found.</p>}
                             {studentSessions.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(session => {
                                 const myStatus = session.studentStatuses?.find(s => s.studentId === student.id)?.status || session.status;
+                                const myIsTrial = isTrialForStudent(session, student.id);
                                 const lessonNum = lessonNumberMap.get(session.id);
                                 const pkgIndex = lessonNum ? Math.floor((lessonNum - 1) / PACKAGE_SIZE) + 1 : null;
                                 const inPkgIndex = lessonNum ? ((lessonNum - 1) % PACKAGE_SIZE) + 1 : null;
@@ -830,14 +832,21 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
                                                     </select>
                                                 </div>
                                                 <div className="flex items-end">
-                                                    <label className="flex items-center gap-2 text-xs text-stone-700">
+                                                    <label className="flex items-center gap-2 text-xs text-stone-700" title="Marks this session as a trial for THIS student only (others in a group session unaffected).">
                                                         <input
                                                             type="checkbox"
-                                                            checked={!!editSessionData.isTrial}
-                                                            onChange={e => setEditSessionData({ ...editSessionData, isTrial: e.target.checked })}
+                                                            checked={isTrialForStudent(editSessionData, student.id)}
+                                                            onChange={e => {
+                                                                const next = e.target.checked;
+                                                                const list = editSessionData.studentStatuses ? [...editSessionData.studentStatuses] : [];
+                                                                const idx = list.findIndex(s => s.studentId === student.id);
+                                                                if (idx >= 0) list[idx] = { ...list[idx], isTrial: next };
+                                                                else list.push({ studentId: student.id, status: editSessionData.status, isTrial: next });
+                                                                setEditSessionData({ ...editSessionData, studentStatuses: list });
+                                                            }}
                                                             className="rounded"
                                                         />
-                                                        Trial lesson
+                                                        Trial for {student.name}
                                                     </label>
                                                 </div>
                                             </div>
@@ -876,7 +885,7 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
                                         </div>
                                         <div className="flex-1 min-w-0">
                                             <div className="flex items-center gap-2 flex-wrap">
-                                                {session.isTrial ? (
+                                                {myIsTrial ? (
                                                     <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200">TRIAL</span>
                                                 ) : lessonNum ? (
                                                     <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-stone-900 text-white" title={`Lesson ${inPkgIndex} of package ${pkgIndex} · #${lessonNum} overall`}>
