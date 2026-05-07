@@ -196,13 +196,15 @@ const AppInner: React.FC = () => {
     setSessions(prev => prev.filter(s => s.id !== sessionId));
   };
 
-  const handlePayment = async (studentId: string, amount: number) => {
+  const handlePayment = async (studentId: string, amount: number, extras?: Partial<Payment>) => {
     const newPayment: Payment = {
       id: `p${Date.now()}`,
       studentId,
       amount,
-      date: new Date().toISOString(),
-      method: 'Manual'
+      date: extras?.date || new Date().toISOString(),
+      method: extras?.method || 'Manual',
+      classCount: extras?.classCount,
+      classType: extras?.classType
     };
     const target = students.find(s => s.id === studentId);
     if (!target) return;

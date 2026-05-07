@@ -11,7 +11,7 @@ interface StudentDetailProps {
   sessions: Session[];
   payments: Payment[];
   onClose: () => void;
-  onUpdatePayment: (studentId: string, amount: number) => void;
+  onUpdatePayment: (studentId: string, amount: number, extras?: Partial<Payment>) => Promise<void> | void;
   onUpdateStudent: (student: Student) => void | Promise<void>;
   onUpdateSession?: (session: Session) => Promise<void> | void;
   onDeleteSession?: (id: string) => Promise<void> | void;
@@ -21,7 +21,7 @@ interface StudentDetailProps {
   rate?: number;
 }
 
-const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, payments, onClose, onUpdateStudent, onUpdateSession, onDeleteSession, onSavePayment, onDeletePayment, currency = 'CNY' as Currency, rate = 1 }) => {
+const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, payments, onClose, onUpdatePayment, onUpdateStudent, onUpdateSession, onDeleteSession, onSavePayment, onDeletePayment, currency = 'CNY' as Currency, rate = 1 }) => {
   const [activeTab, setActiveTab] = useState<'overview' | 'progress' | 'history'>('overview');
   const [historyTab, setHistoryTab] = useState<'classes' | 'purchases'>('classes');
   const [isGenerating, setIsGenerating] = useState(false);
@@ -32,6 +32,8 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
   const [renewType, setRenewType] = useState<ClassType>(ClassType.OneOnOne);
   const [renewClasses, setRenewClasses] = useState(10);
   const [renewCost, setRenewCost] = useState(400);
+  const [renewDate, setRenewDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [renewMethod, setRenewMethod] = useState<string>('WeChat');
 
   // Edit Package State
   const [editingPackageIndex, setEditingPackageIndex] = useState<number | null>(null);
@@ -149,9 +151,21 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
               balance: newBalance,
               classTypes: newClassTypes
           });
+          // Also create a Payment record so it shows in History → Purchases and the
+          // package card on Overview (which is computed from payments) updates.
+          if (renewCost > 0) {
+              await onUpdatePayment(student.id, renewCost, {
+                  date: new Date(renewDate).toISOString(),
+                  method: renewMethod || 'WeChat',
+                  classCount: renewClasses,
+                  classType: renewType
+              });
+          }
           setIsRenewing(false);
           setRenewClasses(10);
           setRenewCost(400);
+          setRenewDate(new Date().toISOString().slice(0, 10));
+          setRenewMethod('WeChat');
       } catch (err: any) {
           setSaveError(`Failed to save: ${err?.message ?? String(err)}`);
       } finally {
@@ -576,10 +590,10 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
                                 <div className="grid grid-cols-2 gap-3">
                                     <div>
                                         <label className="block text-xs font-medium text-stone-500 mb-1">No. of Sessions</label>
-                                        <input 
-                                            type="number" 
+                                        <input
+                                            type="number"
                                             min="1"
-                                            value={renewClasses} 
+                                            value={renewClasses}
                                             onChange={e => setRenewClasses(parseInt(e.target.value) || 0)}
                                             className="w-full p-2 rounded-md border text-sm"
                                         />
@@ -591,6 +605,27 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
                                             min="0"
                                             value={renewCost}
                                             onChange={e => setRenewCost(parseFloat(e.target.value) || 0)}
+                                            className="w-full p-2 rounded-md border text-sm"
+                                        />
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block text-xs font-medium text-stone-500 mb-1">Payment Date</label>
+                                        <input
+                                            type="date"
+                                            value={renewDate}
+                                            onChange={e => setRenewDate(e.target.value)}
+                                            className="w-full p-2 rounded-md border text-sm"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-medium text-stone-500 mb-1">Method / Note</label>
+                                        <input
+                                            type="text"
+                                            value={renewMethod}
+                                            onChange={e => setRenewMethod(e.target.value)}
+                                            placeholder="WeChat"
                                             className="w-full p-2 rounded-md border text-sm"
                                         />
                                     </div>
