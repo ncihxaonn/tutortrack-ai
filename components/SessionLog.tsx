@@ -134,8 +134,13 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
     }
     setStudentStatuses(statusMap);
 
-    setDate(new Date(session.date).toISOString().split('T')[0]);
-    setTime(new Date(session.date).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }));
+    // Use local components for both date and time so the round-trip stays consistent.
+    // Mixing toISOString() (UTC) with toLocaleTimeString (local) caused the date to drift
+    // near midnight, and the time to display in a different zone than it was typed.
+    const _d = new Date(session.date);
+    const _pad = (n: number) => String(n).padStart(2, '0');
+    setDate(`${_d.getFullYear()}-${_pad(_d.getMonth() + 1)}-${_pad(_d.getDate())}`);
+    setTime(`${_pad(_d.getHours())}:${_pad(_d.getMinutes())}`);
     setTopic(session.topic);
     setSessionType(session.type);
     setNotes(session.notes);
@@ -229,9 +234,16 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
 
     const overallStatus = AttendanceStatus.Present;
 
+    // Convert local date (YYYY-MM-DD) + time (HH:MM) into a proper ISO UTC string.
+    // Plain concatenation produced an ambiguous string (no timezone), which Postgres
+    // treats as UTC — causing the displayed time to drift by the user's timezone offset.
+    const _parts = date.split('-').map(Number);
+    const _tparts = time.split(':').map(Number);
+    const _sessionISO = new Date(_parts[0], (_parts[1] || 1) - 1, _parts[2] || 1, _tparts[0] || 0, _tparts[1] || 0, 0).toISOString();
+
     const sessionData = {
       studentIds: selectedStudents,
-      date: `${date}T${time}:00`,
+      date: _sessionISO,
       durationMinutes: 60,
       status: overallStatus,
       studentStatuses: studentStatusesArray,

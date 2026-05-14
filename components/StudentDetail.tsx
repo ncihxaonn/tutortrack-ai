@@ -983,7 +983,11 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
                                 const isEditing = editingSessionId === session.id && editSessionData;
                                 if (isEditing && editSessionData) {
                                     const editStatus = editSessionData.studentStatuses?.find(s => s.studentId === student.id)?.status || editSessionData.status;
-                                    const dateValue = new Date(editSessionData.date).toISOString().slice(0, 16);
+                                    // Show local time in datetime-local input (not UTC). Using toISOString here
+                                    // would display the UTC time, which gets re-saved as local, drifting each round trip.
+                                    const _editD = new Date(editSessionData.date);
+                                    const _pad = (n: number) => String(n).padStart(2, '0');
+                                    const dateValue = `${_editD.getFullYear()}-${_pad(_editD.getMonth() + 1)}-${_pad(_editD.getDate())}T${_pad(_editD.getHours())}:${_pad(_editD.getMinutes())}`;
                                     return (
                                         <div key={session.id} className="bg-white p-4 rounded-2xl border border-coral-200 shadow-sm space-y-3">
                                             <div className="flex items-center justify-between">
