@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { LayoutDashboard, Users, Calendar, Menu, X, BookOpen, GraduationCap, Lock } from 'lucide-react';
 import PasswordGate, { isAuthenticated } from './components/PasswordGate';
 import Dashboard from './components/Dashboard';
@@ -38,6 +38,19 @@ const AppInner: React.FC = () => {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
+
+  // Mirror of `students` state, updated synchronously when we mutate. Reading from
+  // React state (`students`) inside an event handler returns the value captured at
+  // render time — if you call setStudents twice in a row, the second call still
+  // sees the original value, so balance changes silently drop. Reading through the
+  // ref instead always sees the latest known students, so consecutive mutations
+  // (e.g. session edit = remove old charge + add new charge) compose correctly.
+  const studentsRef = useRef<Student[]>([]);
+  const commitStudents = (next: Student[]) => {
+    studentsRef.current = next;
+    setStudents(next);
+  };
+  useEffect(() => { studentsRef.current = students; }, [students]);
   const [adminUnlocked, setAdminUnlocked] = useState<boolean>(isAdminAuthenticated);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -122,7 +135,7 @@ const AppInner: React.FC = () => {
       status: 'Active'
     };
     await withSync('Add student', () => dbUpsertStudent(newStudent));
-    setStudents(prev => [...prev, newStudent]);
+    commitStudents([...studentsRef.current, newStudent]);
 
     if (initialPayments && initialPayments.length > 0) {
       const newPayments: Payment[] = initialPayments.map((ip, i) => ({
@@ -139,7 +152,7 @@ const AppInner: React.FC = () => {
 
   const handleUpdateStudent = async (updatedStudent: Student) => {
     await withSync('Update student', () => dbUpsertStudent(updatedStudent));
-    setStudents(prev => prev.map(s => s.id === updatedStudent.id ? updatedStudent : s));
+    commitStudents(studentsRef.current.map(s => s.id === updatedStudent.id ? updatedStudent : s));
     if (selectedStudent?.id === updatedStudent.id) {
       setSelectedStudent(updatedStudent);
     }
@@ -147,29 +160,42 @@ const AppInner: React.FC = () => {
 
   const handleDeleteStudent = async (id: string) => {
     await withSync('Delete student', () => dbDeleteStudent(id));
-    setStudents(prev => prev.filter(s => s.id !== id));
+    commitStudents(studentsRef.current.filter(s => s.id !== id));
     if (selectedStudent?.id === id) setSelectedStudent(null);
   };
 
   const applyBalanceChanges = async (session: Session, action: 'add' | 'remove') => {
     const multiplier = action === 'add' ? 1 : -1;
-    const updates: Student[] = [];
-    const nextStudents = students.map(student => {
-      if (!session.studentIds.includes(student.id)) return student;
-      const statusObj = session.studentStatuses?.find(s => s.studentId === student.id);
+    // Compute per-student deltas from the session, not from current balances —
+    // that way nothing depends on stale state.
+    const deltas = new Map<string, number>();
+    session.studentIds.forEach(sid => {
+      const statusObj = session.studentStatuses?.find(s => s.studentId === sid);
       const status = statusObj ? statusObj.status : session.status;
-      // Per-student trial overrides session-level. Trials never charge.
       const isTrialHere = typeof statusObj?.isTrial === 'boolean' ? statusObj.isTrial : !!session.isTrial;
-      if (isTrialHere) return student;
+      if (isTrialHere) return;
       const cost = session.price / session.studentIds.length;
       if (status === AttendanceStatus.Present || status === AttendanceStatus.Late) {
-        const updated = { ...student, balance: student.balance + (cost * multiplier) };
-        updates.push(updated);
-        return updated;
+        deltas.set(sid, (deltas.get(sid) || 0) + cost * multiplier);
       }
-      return student;
     });
-    setStudents(nextStudents);
+    if (deltas.size === 0) return;
+
+    // Apply against the ref (latest known state), so two back-to-back calls
+    // (remove old, add new) compose correctly.
+    const updates: Student[] = [];
+    const nextStudents = studentsRef.current.map(s => {
+      const delta = deltas.get(s.id);
+      if (delta === undefined) return s;
+      const updated = { ...s, balance: s.balance + delta };
+      updates.push(updated);
+      return updated;
+    });
+    commitStudents(nextStudents);
+    if (selectedStudent && deltas.has(selectedStudent.id)) {
+      const refreshed = nextStudents.find(s => s.id === selectedStudent.id);
+      if (refreshed) setSelectedStudent(refreshed);
+    }
     await withSync('Update balances', () => Promise.all(updates.map(dbUpsertStudent)));
   };
 
@@ -206,7 +232,11 @@ const AppInner: React.FC = () => {
       classCount: extras?.classCount,
       classType: extras?.classType
     };
-    const target = students.find(s => s.id === studentId);
+    // Read from the ref so we get the latest student record — important when
+    // handlePayment is called right after another student-mutating call (e.g.
+    // the Renew flow updates packages first, then logs the payment). Using
+    // stale closure data would clobber that earlier update.
+    const target = studentsRef.current.find(s => s.id === studentId);
     if (!target) return;
     const updatedStudent = { ...target, balance: target.balance - amount };
     await withSync('Save payment', async () => {
@@ -214,7 +244,7 @@ const AppInner: React.FC = () => {
       await dbUpsertStudent(updatedStudent);
     });
     setPayments(prev => [...prev, newPayment]);
-    setStudents(prev => prev.map(s => s.id === studentId ? updatedStudent : s));
+    commitStudents(studentsRef.current.map(s => s.id === studentId ? updatedStudent : s));
     if (selectedStudent?.id === studentId) setSelectedStudent(updatedStudent);
   };
 
@@ -224,17 +254,18 @@ const AppInner: React.FC = () => {
     await withSync('Update payment', () => dbUpdatePayment(updated));
     setPayments(prev => prev.map(p => p.id === updated.id ? updated : p));
     if (original.amount !== updated.amount || original.studentId !== updated.studentId) {
-      const delta = updated.amount - original.amount;
-      const nextStudents = students.map(s => {
+      const baseStudents = studentsRef.current;
+      const nextStudents = baseStudents.map(s => {
         if (s.id === original.studentId && s.id === updated.studentId) {
+          const delta = updated.amount - original.amount;
           return { ...s, balance: s.balance - delta };
         }
         if (s.id === original.studentId) return { ...s, balance: s.balance + original.amount };
         if (s.id === updated.studentId) return { ...s, balance: s.balance - updated.amount };
         return s;
       });
-      const changed = nextStudents.filter((s, i) => s !== students[i]);
-      setStudents(nextStudents);
+      const changed = nextStudents.filter((s, i) => s !== baseStudents[i]);
+      commitStudents(nextStudents);
       await withSync('Update student balances', () => Promise.all(changed.map(dbUpsertStudent)));
       if (selectedStudent) {
         const refreshed = nextStudents.find(s => s.id === selectedStudent.id);
@@ -248,11 +279,11 @@ const AppInner: React.FC = () => {
     if (!payment) return;
     await withSync('Delete payment', () => dbDeletePayment(id));
     setPayments(prev => prev.filter(p => p.id !== id));
-    const target = students.find(s => s.id === payment.studentId);
+    const target = studentsRef.current.find(s => s.id === payment.studentId);
     if (target) {
       const restored = { ...target, balance: target.balance + payment.amount };
       await withSync('Restore balance', () => dbUpsertStudent(restored));
-      setStudents(prev => prev.map(s => s.id === restored.id ? restored : s));
+      commitStudents(studentsRef.current.map(s => s.id === restored.id ? restored : s));
       if (selectedStudent?.id === restored.id) setSelectedStudent(restored);
     }
   };

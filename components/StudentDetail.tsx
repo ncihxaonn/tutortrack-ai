@@ -136,8 +136,6 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
           });
       }
 
-      const newBalance = student.balance - renewCost;
-
       const newClassTypes = student.classTypes.includes(renewType)
         ? student.classTypes
         : [...student.classTypes, renewType];
@@ -145,14 +143,17 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
       try {
           setIsSaving(true);
           setSaveError(null);
+          // Update packages/classTypes ONLY — don't touch balance here. The
+          // payment log below subtracts renewCost from the balance. If we
+          // also subtracted here, the cost would be applied twice.
           await onUpdateStudent({
               ...student,
               packages: newPackages,
-              balance: newBalance,
               classTypes: newClassTypes
           });
-          // Also create a Payment record so it shows in History → Purchases and the
+          // Create a Payment record so it shows in History → Purchases and the
           // package card on Overview (which is computed from payments) updates.
+          // This also subtracts renewCost from the student's balance.
           if (renewCost > 0) {
               await onUpdatePayment(student.id, renewCost, {
                   date: new Date(renewDate).toISOString(),
