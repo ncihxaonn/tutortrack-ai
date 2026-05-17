@@ -1,10 +1,12 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Cell,
   PieChart, Pie, Legend
 } from 'recharts';
 import { Users, CalendarCheck, Activity, Calendar } from 'lucide-react';
 import { Student, Session, AttendanceStatus } from '../types';
+import { localDateKey } from '../lib/dateUtils';
+import { statusForStudent, isTrialForStudent } from '../lib/sessionHelpers';
 
 interface DashboardProps {
   students: Student[];
@@ -12,45 +14,76 @@ interface DashboardProps {
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ students, sessions }) => {
-  const paidSessions = sessions.filter(s => !s.isTrial);
-  const trialCount = sessions.length - paidSessions.length;
-  const totalSessions = paidSessions.length;
-  const attendedSessions = paidSessions.filter(s => s.status === AttendanceStatus.Present).length;
-  const attendanceRate = totalSessions > 0 ? Math.round((attendedSessions / totalSessions) * 100) : 0;
+  // Group sessions by their LOCAL date key once, so day buckets are consistent
+  // with what the user sees in the calendar (a 11pm session stays on its day,
+  // not the next day in UTC).
+  const sessionsByLocalDay = useMemo(() => {
+    const map = new Map<string, Session[]>();
+    for (const s of sessions) {
+      const key = localDateKey(s.date);
+      const list = map.get(key);
+      if (list) list.push(s);
+      else map.set(key, [s]);
+    }
+    return map;
+  }, [sessions]);
 
+  const paidSessions = useMemo(() => sessions.filter(s => !s.isTrial), [sessions]);
+
+  // A session counts as "attended" for the rate if at least one non-trial
+  // student was Present or Late. Per-student status takes precedence so a
+  // mixed group's stats reflect reality.
+  const stats = useMemo(() => {
+    let totalSlots = 0;
+    let present = 0;
+    let late = 0;
+    let absent = 0;
+    for (const s of sessions) {
+      for (const sid of s.studentIds) {
+        if (isTrialForStudent(s, sid)) continue;
+        const st = statusForStudent(s, sid);
+        totalSlots++;
+        if (st === AttendanceStatus.Present) present++;
+        else if (st === AttendanceStatus.Late) late++;
+        else absent++;
+      }
+    }
+    const attendanceRate = totalSlots > 0 ? Math.round(((present + late) / totalSlots) * 100) : 0;
+    return { totalSlots, present, late, absent, attendanceRate };
+  }, [sessions]);
+
+  const trialCount = sessions.length - paidSessions.length;
   const activeStudents = students.filter(s => s.status === 'Active').length;
 
-  const sessionActivityData = React.useMemo(() => {
-    const days = [];
+  const sessionActivityData = useMemo(() => {
+    const days: Date[] = [];
     for (let i = 6; i >= 0; i--) {
       const d = new Date();
       d.setDate(d.getDate() - i);
       days.push(d);
     }
     return days.map(day => {
-      const dateStr = day.toISOString().split('T')[0];
-      const daySessions = sessions.filter(s => s.date.startsWith(dateStr));
+      const key = localDateKey(day);
+      const daySessions = sessionsByLocalDay.get(key) || [];
       return {
         name: day.toLocaleDateString('en-US', { weekday: 'short' }),
-        fullDate: dateStr,
+        fullDate: key,
         count: daySessions.filter(s => !s.isTrial).length,
         trials: daySessions.filter(s => s.isTrial).length
       };
     });
-  }, [sessions]);
+  }, [sessionsByLocalDay]);
 
-  const attendanceData = React.useMemo(() => {
-    const present = paidSessions.filter(s => s.status === AttendanceStatus.Present).length;
-    const late = paidSessions.filter(s => s.status === AttendanceStatus.Late).length;
-    const absent = paidSessions.filter(s => s.status === AttendanceStatus.Absent || s.status === AttendanceStatus.Cancelled).length;
-    return [
-      { name: 'Present', value: present, color: '#10b981' },
-      { name: 'Late', value: late, color: '#f59e0b' },
-      { name: 'Absent', value: absent, color: '#ef4444' }
-    ].filter(d => d.value > 0);
-  }, [paidSessions]);
+  const attendanceData = useMemo(() => {
+    const data = [
+      { name: 'Present', value: stats.present, color: '#10b981' },
+      { name: 'Late', value: stats.late, color: '#f59e0b' },
+      { name: 'Absent', value: stats.absent, color: '#ef4444' }
+    ];
+    return data.filter(d => d.value > 0);
+  }, [stats]);
 
-  const StatCard = ({ title, value, sub, icon: Icon, color }: any) => (
+  const StatCard: React.FC<{ title: string; value: React.ReactNode; sub?: React.ReactNode; icon: React.ElementType; color: string }> = ({ title, value, sub, icon: Icon, color }) => (
     <div className="bg-white p-6 rounded-2xl border border-cream-border flex items-start justify-between transition-all hover:shadow-md">
       <div>
         <p className="text-sm font-medium text-stone-500 mb-1">{title}</p>
@@ -81,14 +114,14 @@ const Dashboard: React.FC<DashboardProps> = ({ students, sessions }) => {
         />
         <StatCard
           title="Attendance Rate"
-          value={`${attendanceRate}%`}
+          value={`${stats.attendanceRate}%`}
           sub={trialCount > 0 ? `${trialCount} trial${trialCount === 1 ? '' : 's'} (not counted)` : 'Paid sessions'}
           icon={CalendarCheck}
           color="bg-coral-500"
         />
         <StatCard
           title="Total Sessions"
-          value={totalSessions}
+          value={paidSessions.length}
           sub="All time (paid)"
           icon={Calendar}
           color="bg-emerald-500"
@@ -130,7 +163,7 @@ const Dashboard: React.FC<DashboardProps> = ({ students, sessions }) => {
             </div>
             <div>
               <h3 className="font-serif text-lg font-semibold text-stone-900">Attendance</h3>
-              <p className="text-xs text-stone-400">Session status</p>
+              <p className="text-xs text-stone-400">Per-student status</p>
             </div>
           </div>
           <div className="flex-1 relative">
@@ -153,8 +186,8 @@ const Dashboard: React.FC<DashboardProps> = ({ students, sessions }) => {
             )}
             {attendanceData.length > 0 && (
               <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none pb-8">
-                <span className="font-serif text-3xl font-semibold text-stone-900">{totalSessions}</span>
-                <p className="text-xs text-stone-400 uppercase font-semibold">Total</p>
+                <span className="font-serif text-3xl font-semibold text-stone-900">{stats.totalSlots}</span>
+                <p className="text-xs text-stone-400 uppercase font-semibold">Attendees</p>
               </div>
             )}
           </div>

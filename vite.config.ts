@@ -3,23 +3,38 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig(({ mode }) => {
-    const env = loadEnv(mode, '.', '');
-    return {
-      server: {
-        port: 3000,
-        host: '0.0.0.0',
-      },
-      plugins: [react()],
-      define: {
-        'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.SUPABASE_URL': JSON.stringify(env.SUPABASE_URL),
-        'process.env.SUPABASE_ANON_KEY': JSON.stringify(env.SUPABASE_ANON_KEY)
-      },
-      resolve: {
-        alias: {
-          '@': path.resolve(__dirname, '.'),
+  // Pull SUPABASE_*/GEMINI_API_KEY from .env even though they don't have the
+  // VITE_ prefix — Vite would otherwise hide them. We expose them via
+  // import.meta.env for the legacy fallback in lib/env.ts.
+  const env = loadEnv(mode, '.', '');
+  const exposed: Record<string, string> = {};
+  for (const k of ['SUPABASE_URL', 'SUPABASE_ANON_KEY']) {
+    if (env[k]) exposed[`import.meta.env.${k}`] = JSON.stringify(env[k]);
+  }
+
+  return {
+    server: {
+      port: 3000,
+      host: '0.0.0.0'
+    },
+    plugins: [react()],
+    define: exposed,
+    resolve: {
+      alias: {
+        '@': path.resolve(__dirname, '.')
+      }
+    },
+    build: {
+      // Split heavy libs into their own chunks so the main bundle stays small
+      // and lazily loaded routes (charts, AI, admin) don't drag everything in.
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            recharts: ['recharts'],
+            supabase: ['@supabase/supabase-js']
+          }
         }
       }
-    };
+    }
+  };
 });

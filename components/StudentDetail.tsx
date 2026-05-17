@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Student, Session, Payment, AttendanceStatus, ClassType, ClassPackage, SkillProgress } from '../types';
-import { X, Sparkles, PlusCircle, Edit2, Save, XCircle, TrendingUp, Activity, FileText, Trash2, AlertTriangle } from 'lucide-react';
+import { X, Sparkles, PlusCircle, Edit2, Save, XCircle, TrendingUp, Activity, Trash2, AlertTriangle } from 'lucide-react';
 import { generateStudentReport } from '../services/geminiService';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { CURRENCY_SYMBOLS, Currency, formatMoney } from '../lib/currency';
-import { isTrialForStudent } from '../lib/sessionHelpers';
+import { isTrialForStudent, isChargeableStatus } from '../lib/sessionHelpers';
+import { localDateKey, localDateTimeInputValue, localDateOnlyToISO, todayLocalKey, newId } from '../lib/dateUtils';
 
 interface StudentDetailProps {
   student: Student;
@@ -32,7 +33,7 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
   const [renewType, setRenewType] = useState<ClassType>(ClassType.OneOnOne);
   const [renewClasses, setRenewClasses] = useState(10);
   const [renewCost, setRenewCost] = useState(400);
-  const [renewDate, setRenewDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [renewDate, setRenewDate] = useState<string>(() => todayLocalKey());
   const [renewMethod, setRenewMethod] = useState<string>('WeChat');
 
   // Edit Package State
@@ -45,7 +46,7 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
       writing: 50,
       listening: 50,
       speaking: 50,
-      date: new Date().toISOString().split('T')[0],
+      date: todayLocalKey(),
       notes: ''
   });
 
@@ -73,23 +74,47 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
-  const studentSessions = sessions.filter(s => s.studentIds.includes(student.id));
-  const attendedCount = studentSessions.filter(s => s.status === AttendanceStatus.Present).length;
-  const attendanceRate = studentSessions.length ? Math.round((attendedCount / studentSessions.length) * 100) : 0;
+  const studentSessions = useMemo(
+    () => sessions.filter(s => s.studentIds.includes(student.id)),
+    [sessions, student.id]
+  );
 
-  // Lesson numbering per class type — only Present + non-trial sessions count toward a package
-  const lessonNumberMap = new Map<string, number>();
-  {
+  // Use PER-STUDENT status (not the session-level summary) so mixed groups show
+  // correctly: if Bob is Absent and Alice is Present in the same session, Alice's
+  // detail page should show Present.
+  const myAttendance = useMemo(() => {
+    let chargeable = 0;
+    let present = 0;
+    let total = 0;
+    for (const s of studentSessions) {
+      if (isTrialForStudent(s, student.id)) continue;
+      const my = s.studentStatuses?.find(ss => ss.studentId === student.id)?.status || s.status;
+      total++;
+      if (my === AttendanceStatus.Present) present++;
+      if (isChargeableStatus(my)) chargeable++;
+    }
+    const rate = total > 0 ? Math.round(((chargeable) / total) * 100) : 0;
+    return { chargeable, present, total, rate };
+  }, [studentSessions, student.id]);
+
+  const attendedCount = myAttendance.chargeable;
+  const attendanceRate = myAttendance.rate;
+
+  // Lesson numbering per class type — chargeable + non-trial sessions count toward
+  // a package. We treat Late the same as Present (consistent with charging).
+  const lessonNumberMap = useMemo(() => {
+    const map = new Map<string, number>();
     const counters: Record<string, number> = {};
     const ascSessions = [...studentSessions].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
     for (const s of ascSessions) {
       if (isTrialForStudent(s, student.id)) continue;
       const myStatus = s.studentStatuses?.find(ss => ss.studentId === student.id)?.status || s.status;
-      if (myStatus !== AttendanceStatus.Present) continue;
+      if (!isChargeableStatus(myStatus)) continue;
       counters[s.type] = (counters[s.type] || 0) + 1;
-      lessonNumberMap.set(s.id, counters[s.type]);
+      map.set(s.id, counters[s.type] as number);
     }
-  }
+    return map;
+  }, [studentSessions, student.id]);
   const PACKAGE_SIZE = 10;
   
   // Charts Data
@@ -156,7 +181,7 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
           // This also subtracts renewCost from the student's balance.
           if (renewCost > 0) {
               await onUpdatePayment(student.id, renewCost, {
-                  date: new Date(renewDate).toISOString(),
+                  date: localDateOnlyToISO(renewDate),
                   method: renewMethod || 'WeChat',
                   classCount: renewClasses,
                   classType: renewType
@@ -165,7 +190,7 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
           setIsRenewing(false);
           setRenewClasses(10);
           setRenewCost(400);
-          setRenewDate(new Date().toISOString().slice(0, 10));
+          setRenewDate(todayLocalKey());
           setRenewMethod('WeChat');
       } catch (err: any) {
           setSaveError(`Failed to save: ${err?.message ?? String(err)}`);
@@ -205,10 +230,10 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
       }
   };
 
-  const handleAddProgress = (e: React.FormEvent) => {
+  const handleAddProgress = async (e: React.FormEvent) => {
       e.preventDefault();
       const newEntry: SkillProgress = {
-          id: `ph${Date.now()}`,
+          id: newId('ph'),
           date: newProgress.date,
           reading: Number(newProgress.reading),
           writing: Number(newProgress.writing),
@@ -220,13 +245,17 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
       // Sort by date after adding
       const updatedHistory = [...progressHistory, newEntry].sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-      onUpdateStudent({
-          ...student,
-          progressHistory: updatedHistory
-      });
-
-      setNewProgress(prev => ({ ...prev, notes: '' }));
-      // Optional: switch back to overview or clear form fully
+      try {
+          setIsSaving(true);
+          setSaveError(null);
+          await onUpdateStudent({ ...student, progressHistory: updatedHistory });
+          setNewProgress(prev => ({ ...prev, notes: '' }));
+      } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          setSaveError(`Failed to save progress: ${msg}`);
+      } finally {
+          setIsSaving(false);
+      }
   };
 
   const handleStartEditLog = (log: SkillProgress) => {
@@ -234,29 +263,41 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
       setEditLogData({ ...log });
   };
 
-  const confirmDeleteLog = () => {
+  const confirmDeleteLog = async () => {
       if (!logToDelete) return;
       const updatedHistory = (student.progressHistory || []).filter(p => p.id !== logToDelete);
-      onUpdateStudent({
-          ...student,
-          progressHistory: updatedHistory
-      });
-      setLogToDelete(null);
+      try {
+          setIsSaving(true);
+          setSaveError(null);
+          await onUpdateStudent({ ...student, progressHistory: updatedHistory });
+          setLogToDelete(null);
+      } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          setSaveError(`Failed to delete log: ${msg}`);
+      } finally {
+          setIsSaving(false);
+      }
   };
 
-  const handleSaveEditLog = () => {
+  const handleSaveEditLog = async () => {
       if (!editLogData || !student.progressHistory) return;
 
       const updatedHistory = student.progressHistory.map(p =>
           p.id === editLogData.id ? editLogData : p
       ).sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-      onUpdateStudent({
-          ...student,
-          progressHistory: updatedHistory
-      });
-      setEditingLogId(null);
-      setEditLogData(null);
+      try {
+          setIsSaving(true);
+          setSaveError(null);
+          await onUpdateStudent({ ...student, progressHistory: updatedHistory });
+          setEditingLogId(null);
+          setEditLogData(null);
+      } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          setSaveError(`Failed to save log: ${msg}`);
+      } finally {
+          setIsSaving(false);
+      }
   };
 
   // ── Session edit/delete ────────────────────────────────────────────
@@ -293,7 +334,20 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
       const idx = list.findIndex(s => s.studentId === student.id);
       if (idx >= 0) list[idx] = { ...list[idx], status };
       else list.push({ studentId: student.id, status });
-      setEditSessionData({ ...editSessionData, studentStatuses: list, status });
+
+      // Recompute the session-level summary status from ALL per-student statuses
+      // — don't blindly write this student's status into the summary, which used
+      // to make a single absent student look like the whole session was absent.
+      const all = list.map(s => s.status);
+      let summary: AttendanceStatus = editSessionData.status;
+      if (all.length > 0) {
+          if (all.includes(AttendanceStatus.Cancelled)) summary = AttendanceStatus.Cancelled;
+          else if (all.includes(AttendanceStatus.Absent)) summary = AttendanceStatus.Absent;
+          else if (all.includes(AttendanceStatus.Late)) summary = AttendanceStatus.Late;
+          else summary = AttendanceStatus.Present;
+      }
+
+      setEditSessionData({ ...editSessionData, studentStatuses: list, status: summary });
   };
 
   // ── Profile edit ───────────────────────────────────────────────────
@@ -984,11 +1038,9 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
                                 const isEditing = editingSessionId === session.id && editSessionData;
                                 if (isEditing && editSessionData) {
                                     const editStatus = editSessionData.studentStatuses?.find(s => s.studentId === student.id)?.status || editSessionData.status;
-                                    // Show local time in datetime-local input (not UTC). Using toISOString here
-                                    // would display the UTC time, which gets re-saved as local, drifting each round trip.
-                                    const _editD = new Date(editSessionData.date);
-                                    const _pad = (n: number) => String(n).padStart(2, '0');
-                                    const dateValue = `${_editD.getFullYear()}-${_pad(_editD.getMonth() + 1)}-${_pad(_editD.getDate())}T${_pad(_editD.getHours())}:${_pad(_editD.getMinutes())}`;
+                                    // Show local time in datetime-local input (not UTC). Mixing toISOString
+                                    // with the local input value caused drift on every round trip.
+                                    const dateValue = localDateTimeInputValue(editSessionData.date);
                                     return (
                                         <div key={session.id} className="bg-white p-4 rounded-2xl border border-coral-200 shadow-sm space-y-3">
                                             <div className="flex items-center justify-between">
@@ -1001,7 +1053,12 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
                                                     <input
                                                         type="datetime-local"
                                                         value={dateValue}
-                                                        onChange={e => setEditSessionData({ ...editSessionData, date: new Date(e.target.value).toISOString() })}
+                                                        onChange={e => {
+                                                            // The datetime-local value is "YYYY-MM-DDTHH:MM" in LOCAL time.
+                                                            // `new Date(value)` interprets it as local — that's what we want.
+                                                            const next = e.target.value ? new Date(e.target.value).toISOString() : editSessionData.date;
+                                                            setEditSessionData({ ...editSessionData, date: next });
+                                                        }}
                                                         className="w-full p-2 rounded-md border text-xs"
                                                     />
                                                 </div>
@@ -1157,7 +1214,7 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
                                         {studentPayments.map(payment => {
                                             const isEditing = editingPaymentId === payment.id && editPaymentData;
                                             if (isEditing && editPaymentData) {
-                                                const dateValue = new Date(editPaymentData.date).toISOString().slice(0, 10);
+                                                const dateValue = localDateKey(editPaymentData.date);
                                                 return (
                                                     <div key={payment.id} className="bg-white p-4 rounded-2xl border border-coral-200 shadow-sm space-y-3">
                                                         <div className="flex items-center justify-between">
@@ -1180,7 +1237,7 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
                                                                 <input
                                                                     type="date"
                                                                     value={dateValue}
-                                                                    onChange={e => setEditPaymentData({ ...editPaymentData, date: new Date(e.target.value).toISOString() })}
+                                                                    onChange={e => setEditPaymentData({ ...editPaymentData, date: localDateOnlyToISO(e.target.value) })}
                                                                     className="w-full p-2 rounded-md border text-xs"
                                                                 />
                                                             </div>

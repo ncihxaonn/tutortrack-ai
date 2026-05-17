@@ -1,11 +1,16 @@
 import React, { useState } from 'react';
 import { Lock, ShieldAlert } from 'lucide-react';
+import { ENV } from '../lib/env';
 
-const ADMIN_PASSWORD = (import.meta.env.VITE_ADMIN_PASSWORD as string | undefined)?.trim();
+const ADMIN_PASSWORD = ENV.ADMIN_PASSWORD;
 const SESSION_KEY = 'tt_admin_auth';
 
 export function isAdminAuthenticated(): boolean {
-  if (!ADMIN_PASSWORD) return true; // no admin password set → open (acts as warning state)
+  if (!ADMIN_PASSWORD) {
+    // Open access ONLY in dev — never in prod. A missing prod env should
+    // require explicit setup, not silently expose the finance page.
+    return ENV.IS_DEV;
+  }
   return sessionStorage.getItem(SESSION_KEY) === 'yes';
 }
 
@@ -42,9 +47,14 @@ const AdminGate: React.FC<{ onUnlock: () => void }> = ({ onUnlock }) => {
           <p className="text-sm text-stone-500 mt-1 text-center">This page contains financial information. Enter the admin password to continue.</p>
         </div>
 
-        {!ADMIN_PASSWORD && (
+        {!ADMIN_PASSWORD && ENV.IS_PROD && (
+          <div className="bg-red-50 border border-red-200 text-red-800 text-xs rounded-lg p-3 mb-4">
+            <strong>VITE_ADMIN_PASSWORD</strong> isn't set on this deployment. Set it in Vercel and redeploy before using the admin page.
+          </div>
+        )}
+        {!ADMIN_PASSWORD && ENV.IS_DEV && (
           <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg p-3 mb-4">
-            ⚠️ <strong>VITE_ADMIN_PASSWORD</strong> isn't set. The page is currently open to anyone.
+            ⚠️ <strong>VITE_ADMIN_PASSWORD</strong> isn't set. Page is open in dev only — set the var before deploying.
           </div>
         )}
 
@@ -57,6 +67,8 @@ const AdminGate: React.FC<{ onUnlock: () => void }> = ({ onUnlock }) => {
               onChange={e => { setValue(e.target.value); setError(false); }}
               placeholder="Admin password"
               autoFocus
+              autoComplete="current-password"
+              aria-label="Admin password"
               className={`w-full pl-10 pr-4 py-3 rounded-xl border text-sm focus:outline-none focus:ring-2 transition-colors ${
                 error
                   ? 'border-red-300 bg-red-50 focus:ring-red-200 text-red-700 placeholder-red-300'
@@ -69,7 +81,8 @@ const AdminGate: React.FC<{ onUnlock: () => void }> = ({ onUnlock }) => {
           )}
           <button
             type="submit"
-            className="w-full bg-stone-900 hover:bg-stone-800 text-white font-medium py-3 rounded-xl transition-colors text-sm"
+            disabled={!ADMIN_PASSWORD && ENV.IS_PROD}
+            className="w-full bg-stone-900 hover:bg-stone-800 disabled:opacity-40 text-white font-medium py-3 rounded-xl transition-colors text-sm"
           >
             Unlock
           </button>

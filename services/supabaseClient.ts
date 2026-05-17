@@ -1,11 +1,13 @@
 import { createClient } from '@supabase/supabase-js';
-import { Student, Session, Payment, ClassType, Teacher } from '../types';
+import { Student, Session, Payment, ClassType, Teacher, AttendanceStatus } from '../types';
+import { ENV } from '../lib/env';
 
-const url = process.env.SUPABASE_URL as string;
-const key = process.env.SUPABASE_ANON_KEY as string;
-
-export const supabase = createClient(url, key, {
-  auth: { persistSession: false }
+export const supabase = createClient(ENV.SUPABASE_URL, ENV.SUPABASE_ANON_KEY, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true
+  }
 });
 
 type StudentRow = {
@@ -57,17 +59,31 @@ type PaymentRow = {
   class_type?: string | null;
 };
 
+// Enum guards so an unexpected DB value can't bypass typing. Falls back to a
+// safe default rather than throwing — bad data shouldn't take down the UI.
+const VALID_CLASS_TYPES: readonly string[] = Object.values(ClassType);
+const toClassType = (v: unknown): ClassType => {
+  if (typeof v === 'string' && VALID_CLASS_TYPES.includes(v)) return v as ClassType;
+  return ClassType.OneOnOne;
+};
+
+const VALID_STATUSES: readonly string[] = Object.values(AttendanceStatus);
+const toAttendanceStatus = (v: unknown): AttendanceStatus => {
+  if (typeof v === 'string' && VALID_STATUSES.includes(v)) return v as AttendanceStatus;
+  return AttendanceStatus.Present;
+};
+
 const toStudent = (r: StudentRow): Student => ({
   id: r.id,
   name: r.name,
-  classTypes: (r.class_types || []) as ClassType[],
+  classTypes: ((r.class_types || []) as unknown[]).map(toClassType),
   email: r.email ?? undefined,
   parentName: r.parent_name ?? undefined,
   notes: r.notes ?? '',
   balance: Number(r.balance) || 0,
   joinedDate: r.joined_date,
   status: r.status,
-  packages: r.packages || [],
+  packages: (r.packages || []).map(p => ({ ...p, type: toClassType(p.type) })),
   progressHistory: r.progress_history || []
 });
 
@@ -90,9 +106,12 @@ const toSession = (r: SessionRow): Session => ({
   studentIds: r.student_ids || [],
   date: r.date,
   durationMinutes: r.duration_minutes,
-  status: r.status,
-  studentStatuses: r.student_statuses || [],
-  type: r.type as ClassType,
+  status: toAttendanceStatus(r.status),
+  studentStatuses: (r.student_statuses || []).map(s => ({
+    ...s,
+    status: toAttendanceStatus(s.status)
+  })),
+  type: toClassType(r.type),
   topic: r.topic,
   notes: r.notes,
   price: Number(r.price) || 0,
@@ -142,7 +161,7 @@ const toPayment = (r: PaymentRow): Payment => ({
   date: r.date,
   method: r.method,
   classCount: r.class_count == null ? undefined : Number(r.class_count),
-  classType: r.class_type ? (r.class_type as ClassType) : undefined
+  classType: r.class_type ? toClassType(r.class_type) : undefined
 });
 
 const fromPayment = (p: Payment) => ({
@@ -157,10 +176,10 @@ const fromPayment = (p: Payment) => ({
 
 export async function fetchAll() {
   const [s, ss, p, t] = await Promise.all([
-    supabase.from('students').select('*'),
-    supabase.from('sessions').select('*'),
-    supabase.from('payments').select('*'),
-    supabase.from('teachers').select('*')
+    supabase.from('students').select('*').order('joined_date', { ascending: false }),
+    supabase.from('sessions').select('*').order('date', { ascending: false }),
+    supabase.from('payments').select('*').order('date', { ascending: false }),
+    supabase.from('teachers').select('*').order('joined_date', { ascending: false })
   ]);
   if (s.error) throw s.error;
   if (ss.error) throw ss.error;
@@ -200,3 +219,75 @@ export const upsertTeacher = (t: Teacher) =>
 
 export const deleteTeacher = (id: string) =>
   supabase.from('teachers').delete().eq('id', id).then(r => { if (r.error) throw r.error; });
+
+// ── Atomic RPC wrappers ─────────────────────────────────────────────────────
+// These call Postgres functions defined in supabase/migrations/0001_rpc.sql.
+// They guarantee that session + balance / payment + balance changes happen in
+// a single transaction; partial failures roll back instead of corrupting state.
+
+export type RpcSessionResult = {
+  session: Session;
+  students: Student[];
+};
+
+const parseSessionResult = (data: unknown): RpcSessionResult => {
+  const raw = data as { session?: SessionRow; students?: StudentRow[] } | null;
+  if (!raw || !raw.session) throw new Error('RPC returned no session');
+  return {
+    session: toSession(raw.session),
+    students: (raw.students ?? []).map(toStudent)
+  };
+};
+
+export const rpcSaveSession = async (session: Session): Promise<RpcSessionResult> => {
+  const { data, error } = await supabase.rpc('save_session', { p_session: fromSession(session) });
+  if (error) throw error;
+  return parseSessionResult(data);
+};
+
+export const rpcDeleteSession = async (sessionId: string): Promise<{ students: Student[] }> => {
+  const { data, error } = await supabase.rpc('delete_session', { p_session_id: sessionId });
+  if (error) throw error;
+  const raw = data as { students?: StudentRow[] } | null;
+  return { students: (raw?.students ?? []).map(toStudent) };
+};
+
+export type RpcPaymentResult = {
+  payment: Payment;
+  student: Student;
+};
+
+const parsePaymentResult = (data: unknown): RpcPaymentResult => {
+  const raw = data as { payment?: PaymentRow; student?: StudentRow } | null;
+  if (!raw || !raw.payment || !raw.student) throw new Error('RPC returned incomplete payment');
+  return {
+    payment: toPayment(raw.payment),
+    student: toStudent(raw.student)
+  };
+};
+
+export const rpcRecordPayment = async (payment: Payment): Promise<RpcPaymentResult> => {
+  const { data, error } = await supabase.rpc('record_payment', { p_payment: fromPayment(payment) });
+  if (error) throw error;
+  return parsePaymentResult(data);
+};
+
+export const rpcUpdatePayment = async (payment: Payment): Promise<RpcPaymentResult> => {
+  const { data, error } = await supabase.rpc('update_payment', { p_payment: fromPayment(payment) });
+  if (error) throw error;
+  return parsePaymentResult(data);
+};
+
+export const rpcDeletePayment = async (paymentId: string): Promise<{ student: Student | null }> => {
+  const { data, error } = await supabase.rpc('delete_payment', { p_payment_id: paymentId });
+  if (error) throw error;
+  const raw = data as { student?: StudentRow } | null;
+  return { student: raw?.student ? toStudent(raw.student) : null };
+};
+
+export const rpcDeleteTeacher = async (teacherId: string): Promise<{ sessions: Session[] }> => {
+  const { data, error } = await supabase.rpc('delete_teacher', { p_teacher_id: teacherId });
+  if (error) throw error;
+  const raw = data as { sessions?: SessionRow[] } | null;
+  return { sessions: (raw?.sessions ?? []).map(toSession) };
+};

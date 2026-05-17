@@ -1,11 +1,17 @@
 import React, { useState } from 'react';
 import { BookOpen, Lock } from 'lucide-react';
+import { ENV } from '../lib/env';
 
-const CORRECT_PASSWORD = (import.meta.env.VITE_SITE_PASSWORD as string | undefined)?.trim();
+const CORRECT_PASSWORD = ENV.SITE_PASSWORD;
 const SESSION_KEY = 'tt_auth';
 
 export function isAuthenticated(): boolean {
-  if (!CORRECT_PASSWORD) return true; // no password set → open
+  if (!CORRECT_PASSWORD) {
+    // In dev we allow open access; in prod a missing password env is a misconfig
+    // and we should NOT let everyone through. The gate component below will
+    // show a setup-required screen in that case.
+    return ENV.IS_DEV;
+  }
   return sessionStorage.getItem(SESSION_KEY) === 'yes';
 }
 
@@ -13,6 +19,23 @@ const PasswordGate: React.FC<{ onUnlock: () => void }> = ({ onUnlock }) => {
   const [value, setValue] = useState('');
   const [error, setError] = useState(false);
   const [shaking, setShaking] = useState(false);
+
+  if (!CORRECT_PASSWORD && ENV.IS_PROD) {
+    return (
+      <div className="min-h-screen bg-cream flex items-center justify-center px-4">
+        <div className="bg-white rounded-2xl border border-red-200 shadow-lg p-8 w-full max-w-md text-center">
+          <div className="bg-red-50 p-3 rounded-xl inline-flex mb-4">
+            <Lock className="w-7 h-7 text-red-600" />
+          </div>
+          <h1 className="font-serif text-2xl font-semibold text-stone-900 tracking-tight mb-2">Setup required</h1>
+          <p className="text-sm text-stone-600">
+            <code className="px-1.5 py-0.5 bg-stone-100 rounded">VITE_SITE_PASSWORD</code> isn't set on this deployment.
+            Add it in the Vercel project settings and redeploy.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   const attempt = (e: React.FormEvent) => {
     e.preventDefault();
@@ -47,6 +70,8 @@ const PasswordGate: React.FC<{ onUnlock: () => void }> = ({ onUnlock }) => {
               onChange={e => { setValue(e.target.value); setError(false); }}
               placeholder="Password"
               autoFocus
+              autoComplete="current-password"
+              aria-label="Site password"
               className={`w-full pl-10 pr-4 py-3 rounded-xl border text-sm focus:outline-none focus:ring-2 transition-colors ${
                 error
                   ? 'border-red-300 bg-red-50 focus:ring-red-200 text-red-700 placeholder-red-300'

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer,
   AreaChart, Area
@@ -7,6 +7,7 @@ import { DollarSign, TrendingUp, Pencil, Trash2, AlertTriangle, Wallet, Loader2,
 import { Student, Payment } from '../types';
 import { Currency, CURRENCY_SYMBOLS, CURRENCY_LABELS, BASE_CURRENCY, formatMoney } from '../lib/currency';
 import { lockAdmin } from './AdminGate';
+import { localDateKey, localDateOnlyToISO } from '../lib/dateUtils';
 
 interface AdminProps {
   students: Student[];
@@ -25,21 +26,62 @@ interface AdminProps {
 const Admin: React.FC<AdminProps> = ({ students, payments, onUpdatePayment, onDeletePayment, currency, rate, rateLoading, rateError, rateFetchedAt, onToggleCurrency, onLock }) => {
   const [editingPayment, setEditingPayment] = useState<Payment | null>(null);
   const [paymentToDelete, setPaymentToDelete] = useState<Payment | null>(null);
+  const [isMutating, setIsMutating] = useState(false);
+  const [mutationError, setMutationError] = useState<string | null>(null);
 
-  const totalRevenue = payments.reduce((sum, p) => sum + p.amount, 0);
-  const totalOutstanding = students.reduce((sum, s) => sum + (s.balance > 0 ? s.balance : 0), 0);
-  const totalCredit = students.reduce((sum, s) => sum + (s.balance < 0 ? -s.balance : 0), 0);
+  const totalRevenue = useMemo(() => payments.reduce((sum, p) => sum + p.amount, 0), [payments]);
+  const totalOutstanding = useMemo(() => students.reduce((sum, s) => sum + (s.balance > 0 ? s.balance : 0), 0), [students]);
+  const totalCredit = useMemo(() => students.reduce((sum, s) => sum + (s.balance < 0 ? -s.balance : 0), 0), [students]);
 
-  const revenueData = React.useMemo(() => {
-    const grouped: Record<string, number> = {};
+  const revenueData = useMemo(() => {
+    const grouped = new Map<string, number>();
     const sorted = [...payments].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-    if (sorted.length === 0) return [];
     sorted.forEach(p => {
       const key = new Date(p.date).toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
-      grouped[key] = (grouped[key] || 0) + p.amount;
+      grouped.set(key, (grouped.get(key) || 0) + p.amount);
     });
-    return Object.entries(grouped).map(([name, amount]) => ({ name, amount }));
+    return Array.from(grouped, ([name, amount]) => ({ name, amount }));
   }, [payments]);
+
+  const sortedPayments = useMemo(
+    () => [...payments].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
+    [payments]
+  );
+
+  const studentsById = useMemo(() => {
+    const m = new Map<string, Student>();
+    students.forEach(s => m.set(s.id, s));
+    return m;
+  }, [students]);
+
+  const handleSavePayment = async (p: Payment) => {
+    try {
+      setIsMutating(true);
+      setMutationError(null);
+      await onUpdatePayment(p);
+      setEditingPayment(null);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setMutationError(`Failed to save payment: ${msg}`);
+    } finally {
+      setIsMutating(false);
+    }
+  };
+
+  const handleDeletePayment = async () => {
+    if (!paymentToDelete) return;
+    try {
+      setIsMutating(true);
+      setMutationError(null);
+      await onDeletePayment(paymentToDelete.id);
+      setPaymentToDelete(null);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setMutationError(`Failed to delete payment: ${msg}`);
+    } finally {
+      setIsMutating(false);
+    }
+  };
 
   const StatCard = ({ title, value, sub, icon: Icon, color }: any) => (
     <div className="bg-white p-6 rounded-2xl border border-cream-border flex items-start justify-between transition-all hover:shadow-md">
@@ -147,7 +189,7 @@ const Admin: React.FC<AdminProps> = ({ students, payments, onUpdatePayment, onDe
                 <YAxis axisLine={false} tickLine={false} tick={{fill: '#78716C', fontSize: 12}} tickFormatter={(value) => formatMoney(value, currency, rate)} />
                 <RechartsTooltip
                   contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                  formatter={(value: number) => [formatMoney(value, currency, rate), 'Revenue']}
+                  formatter={(value) => [formatMoney(Number(value) || 0, currency, rate), 'Revenue']}
                 />
                 <Area type="monotone" dataKey="amount" stroke="#10b981" strokeWidth={3} fillOpacity={1} fill="url(#adminRevenue)" />
               </AreaChart>
@@ -170,8 +212,8 @@ const Admin: React.FC<AdminProps> = ({ students, payments, onUpdatePayment, onDe
           <p className="text-sm text-stone-400 text-center py-10">No payments recorded.</p>
         ) : (
           <div className="space-y-2 max-h-[480px] overflow-y-auto pr-2">
-            {[...payments].sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(payment => {
-              const student = students.find(s => s.id === payment.studentId);
+            {sortedPayments.map(payment => {
+              const student = studentsById.get(payment.studentId);
               return (
                 <div key={payment.id} className="group flex justify-between items-center p-3 bg-cream rounded-lg border border-cream-border hover:border-coral-200 transition-colors">
                   <div className="min-w-0">
@@ -200,13 +242,15 @@ const Admin: React.FC<AdminProps> = ({ students, payments, onUpdatePayment, onDe
         <EditPaymentModal
           payment={editingPayment}
           students={students}
-          onClose={() => setEditingPayment(null)}
-          onSave={(p) => { onUpdatePayment(p); setEditingPayment(null); }}
+          onClose={() => { setEditingPayment(null); setMutationError(null); }}
+          onSave={handleSavePayment}
+          isSaving={isMutating}
+          error={mutationError}
         />
       )}
 
       {paymentToDelete && (
-        <div className="fixed inset-0 bg-stone-900/40 flex items-center justify-center z-50 p-4" onClick={() => setPaymentToDelete(null)}>
+        <div className="fixed inset-0 bg-stone-900/40 flex items-center justify-center z-50 p-4" onClick={() => { if (!isMutating) { setPaymentToDelete(null); setMutationError(null); } }}>
           <div className="bg-white rounded-2xl max-w-md w-full p-6 border border-cream-border" onClick={e => e.stopPropagation()}>
             <div className="flex items-start gap-3 mb-4">
               <div className="p-2 bg-red-50 rounded-lg">
@@ -215,13 +259,14 @@ const Admin: React.FC<AdminProps> = ({ students, payments, onUpdatePayment, onDe
               <div>
                 <h3 className="font-serif text-lg font-semibold tracking-tight text-stone-900">Delete this payment?</h3>
                 <p className="text-sm text-stone-600 mt-1">
-                  Removing {formatMoney(paymentToDelete.amount, currency, rate)} from {students.find(s => s.id === paymentToDelete.studentId)?.name || 'this student'}. Their balance will be restored by the same amount. This can't be undone.
+                  Removing {formatMoney(paymentToDelete.amount, currency, rate)} from {studentsById.get(paymentToDelete.studentId)?.name || 'this student'}. Their balance will be restored by the same amount. This can't be undone.
                 </p>
               </div>
             </div>
+            {mutationError && <p className="text-sm text-red-600 mb-3">{mutationError}</p>}
             <div className="flex justify-end gap-2">
-              <button onClick={() => setPaymentToDelete(null)} className="px-4 py-2 text-sm font-medium text-stone-700 bg-cream hover:bg-cream-soft rounded-lg transition-colors">Cancel</button>
-              <button onClick={() => { onDeletePayment(paymentToDelete.id); setPaymentToDelete(null); }} className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors">Delete</button>
+              <button onClick={() => { setPaymentToDelete(null); setMutationError(null); }} disabled={isMutating} className="px-4 py-2 text-sm font-medium text-stone-700 bg-cream hover:bg-cream-soft rounded-lg transition-colors disabled:opacity-50">Cancel</button>
+              <button onClick={handleDeletePayment} disabled={isMutating} className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50">{isMutating ? 'Deleting…' : 'Delete'}</button>
             </div>
           </div>
         </div>
@@ -234,29 +279,32 @@ interface EditPaymentModalProps {
   payment: Payment;
   students: Student[];
   onClose: () => void;
-  onSave: (p: Payment) => void;
+  onSave: (p: Payment) => Promise<void> | void;
+  isSaving?: boolean;
+  error?: string | null;
 }
 
-const EditPaymentModal: React.FC<EditPaymentModalProps> = ({ payment, students, onClose, onSave }) => {
+const EditPaymentModal: React.FC<EditPaymentModalProps> = ({ payment, students, onClose, onSave, isSaving, error }) => {
   const [amount, setAmount] = useState(payment.amount.toString());
-  const [date, setDate] = useState(payment.date.slice(0, 10));
+  // Local-date helpers — date inputs work in local time, not UTC.
+  const [date, setDate] = useState(localDateKey(payment.date));
   const [method, setMethod] = useState(payment.method);
   const [studentId, setStudentId] = useState(payment.studentId);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const parsed = parseFloat(amount);
     if (isNaN(parsed) || parsed <= 0) return;
-    onSave({
+    await onSave({
       ...payment,
       amount: parsed,
-      date: new Date(date).toISOString(),
+      date: localDateOnlyToISO(date),
       method: method.trim() || 'Manual',
       studentId
     });
   };
 
   return (
-    <div className="fixed inset-0 bg-stone-900/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-stone-900/40 flex items-center justify-center z-50 p-4" onClick={() => { if (!isSaving) onClose(); }}>
       <div className="bg-white rounded-2xl max-w-md w-full p-6 border border-cream-border" onClick={e => e.stopPropagation()}>
         <h3 className="font-serif text-lg font-semibold tracking-tight text-stone-900 mb-4">Edit Payment</h3>
         <div className="space-y-4">
@@ -280,9 +328,10 @@ const EditPaymentModal: React.FC<EditPaymentModalProps> = ({ payment, students, 
             <input type="text" value={method} onChange={(e) => setMethod(e.target.value)} placeholder="Cash, Bank Transfer, etc." className="w-full px-3 py-2 border border-cream-border rounded-lg focus:outline-none focus:ring-2 focus:ring-coral-500 text-sm" />
           </div>
         </div>
+        {error && <p className="text-sm text-red-600 mt-3">{error}</p>}
         <div className="flex justify-end gap-2 mt-6">
-          <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-stone-700 bg-cream hover:bg-cream-soft rounded-lg transition-colors">Cancel</button>
-          <button onClick={handleSave} className="px-4 py-2 text-sm font-medium text-white bg-coral-600 hover:bg-coral-700 rounded-lg transition-colors">Save</button>
+          <button onClick={onClose} disabled={!!isSaving} className="px-4 py-2 text-sm font-medium text-stone-700 bg-cream hover:bg-cream-soft rounded-lg transition-colors disabled:opacity-50">Cancel</button>
+          <button onClick={handleSave} disabled={!!isSaving} className="px-4 py-2 text-sm font-medium text-white bg-coral-600 hover:bg-coral-700 rounded-lg transition-colors disabled:opacity-50">{isSaving ? 'Saving…' : 'Save'}</button>
         </div>
       </div>
     </div>

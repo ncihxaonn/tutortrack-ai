@@ -1,35 +1,47 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { LayoutDashboard, Users, Calendar, Menu, X, BookOpen, GraduationCap, Lock } from 'lucide-react';
-import PasswordGate, { isAuthenticated } from './components/PasswordGate';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { LayoutDashboard, Users, Calendar, Menu, X, BookOpen, GraduationCap, Lock, LogOut } from 'lucide-react';
 import Dashboard from './components/Dashboard';
 import Admin from './components/Admin';
-import AdminGate, { isAdminAuthenticated } from './components/AdminGate';
+import AdminGate, { isAdminAuthenticated, lockAdmin } from './components/AdminGate';
 import StudentList from './components/StudentList';
 import SessionLog from './components/SessionLog';
 import StudentDetail from './components/StudentDetail';
 import TeacherList from './components/TeacherList';
-import { TabItem, Student, Session, Payment, AttendanceStatus, Teacher } from './types';
+import LoginPage from './components/LoginPage';
+import { TabItem, Student, Session, Payment, Teacher } from './types';
 import { Currency, BASE_CURRENCY, fetchRate } from './lib/currency';
+import { newId } from './lib/dateUtils';
+import { AuthProvider, useAuth } from './lib/authContext';
 import {
   fetchAll,
   upsertStudent as dbUpsertStudent,
   deleteStudent as dbDeleteStudent,
-  upsertSession as dbUpsertSession,
-  deleteSession as dbDeleteSession,
-  insertPayment as dbInsertPayment,
-  updatePayment as dbUpdatePayment,
-  deletePayment as dbDeletePayment,
   upsertTeacher as dbUpsertTeacher,
-  deleteTeacher as dbDeleteTeacher
+  rpcSaveSession,
+  rpcDeleteSession,
+  rpcRecordPayment,
+  rpcUpdatePayment,
+  rpcDeletePayment,
+  rpcDeleteTeacher
 } from './services/supabaseClient';
 
-const App: React.FC = () => {
-  const [unlocked, setUnlocked] = useState(isAuthenticated);
-  if (!unlocked) return <PasswordGate onUnlock={() => setUnlocked(true)} />;
+const App: React.FC = () => (
+  <AuthProvider>
+    <AppShell />
+  </AuthProvider>
+);
+
+const AppShell: React.FC = () => {
+  const { session, loading } = useAuth();
+  if (loading) {
+    return <div className="flex items-center justify-center min-h-screen text-stone-500">Loading…</div>;
+  }
+  if (!session) return <LoginPage />;
   return <AppInner />;
 };
 
 const AppInner: React.FC = () => {
+  const { signOut } = useAuth();
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
@@ -39,36 +51,51 @@ const AppInner: React.FC = () => {
   const [payments, setPayments] = useState<Payment[]>([]);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
 
-  // Mirror of `students` state, updated synchronously when we mutate. Reading from
-  // React state (`students`) inside an event handler returns the value captured at
-  // render time — if you call setStudents twice in a row, the second call still
-  // sees the original value, so balance changes silently drop. Reading through the
-  // ref instead always sees the latest known students, so consecutive mutations
-  // (e.g. session edit = remove old charge + add new charge) compose correctly.
+  // Mirrors of state, kept in sync so event handlers don't read stale closures.
   const studentsRef = useRef<Student[]>([]);
-  const commitStudents = (next: Student[]) => {
+  const sessionsRef = useRef<Session[]>([]);
+  const paymentsRef = useRef<Payment[]>([]);
+  const teachersRef = useRef<Teacher[]>([]);
+
+  const commitStudents = useCallback((next: Student[]) => {
     studentsRef.current = next;
     setStudents(next);
-  };
+  }, []);
+  const commitSessions = useCallback((next: Session[]) => {
+    sessionsRef.current = next;
+    setSessions(next);
+  }, []);
+  const commitPayments = useCallback((next: Payment[]) => {
+    paymentsRef.current = next;
+    setPayments(next);
+  }, []);
+  const commitTeachers = useCallback((next: Teacher[]) => {
+    teachersRef.current = next;
+    setTeachers(next);
+  }, []);
+
   useEffect(() => { studentsRef.current = students; }, [students]);
+  useEffect(() => { sessionsRef.current = sessions; }, [sessions]);
+  useEffect(() => { paymentsRef.current = payments; }, [payments]);
+  useEffect(() => { teachersRef.current = teachers; }, [teachers]);
+
   const [adminUnlocked, setAdminUnlocked] = useState<boolean>(isAdminAuthenticated);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
 
-  // Helper: wrap any async sync op so errors become a visible banner instead of silently failing.
-  const withSync = async <T,>(label: string, op: () => PromiseLike<T>): Promise<T> => {
+  // Helper: surface any async failure as a banner so silent corruption doesn't happen.
+  const withSync = useCallback(async <T,>(label: string, op: () => PromiseLike<T>): Promise<T> => {
     try {
       setSyncError(null);
       return await op();
-    } catch (e: any) {
-      const msg = `${label} failed: ${e?.message ?? String(e)}`;
-      setSyncError(msg);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setSyncError(`${label} failed: ${msg}`);
       throw e;
     }
-  };
+  }, []);
 
-  // Currency display: base is CNY; toggle to AUD using a live exchange rate.
   const [currency, setCurrency] = useState<Currency>(BASE_CURRENCY);
   const [rate, setRate] = useState<number>(1);
   const [rateLoading, setRateLoading] = useState(false);
@@ -78,14 +105,17 @@ const AppInner: React.FC = () => {
   useEffect(() => {
     fetchAll()
       .then(({ students, sessions, payments, teachers }) => {
-        setStudents(students);
-        setSessions(sessions);
-        setPayments(payments);
-        setTeachers(teachers);
+        commitStudents(students);
+        commitSessions(sessions);
+        commitPayments(payments);
+        commitTeachers(teachers);
       })
-      .catch(e => setLoadError(e.message ?? 'Failed to load data'))
+      .catch(e => {
+        const msg = e instanceof Error ? e.message : String(e);
+        setLoadError(msg || 'Failed to load data');
+      })
       .finally(() => setLoading(false));
-  }, []);
+  }, [commitStudents, commitSessions, commitPayments, commitTeachers]);
 
   useEffect(() => {
     if (currency === BASE_CURRENCY) {
@@ -104,7 +134,8 @@ const AppInner: React.FC = () => {
       })
       .catch(e => {
         if (cancelled) return;
-        setRateError(e.message ?? 'Failed to fetch rate');
+        const msg = e instanceof Error ? e.message : String(e);
+        setRateError(msg || 'Failed to fetch rate');
       })
       .finally(() => {
         if (!cancelled) setRateLoading(false);
@@ -112,119 +143,102 @@ const AppInner: React.FC = () => {
     return () => { cancelled = true; };
   }, [currency]);
 
-  const toggleCurrency = () => {
-    setCurrency(prev => prev === 'CNY' ? 'AUD' : 'CNY');
-  };
+  const toggleCurrency = () => setCurrency(prev => prev === 'CNY' ? 'AUD' : 'CNY');
 
-  const tabs: TabItem[] = [
+  const tabs: TabItem[] = useMemo(() => [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'students', label: 'Students', icon: Users },
     { id: 'teachers', label: 'Teachers', icon: GraduationCap },
     { id: 'sessions', label: 'Calendar', icon: Calendar },
-    { id: 'admin', label: 'Admin', icon: Lock },
-  ];
+    { id: 'admin', label: 'Admin', icon: Lock }
+  ], []);
 
-  const handleAddStudent = async (
+  // ── Helpers ────────────────────────────────────────────────────────────
+  // Apply a list of (possibly partial) student rows returned by an RPC into
+  // local state — keeping the ref in sync so subsequent calls compose.
+  const mergeStudents = (incoming: Student[]) => {
+    if (incoming.length === 0) return;
+    const incomingMap = new Map<string, Student>();
+    incoming.forEach(s => incomingMap.set(s.id, s));
+    const next = studentsRef.current.map(s => incomingMap.get(s.id) ?? s);
+    commitStudents(next);
+    if (selectedStudent && incomingMap.has(selectedStudent.id)) {
+      const refreshed = incomingMap.get(selectedStudent.id)!;
+      setSelectedStudent(refreshed);
+    }
+  };
+
+  // ── Students ──────────────────────────────────────────────────────────
+  const handleAddStudent = useCallback(async (
     newStudentData: Omit<Student, 'id' | 'joinedDate' | 'status'>,
-    initialPayments?: { amount: number; label: string }[]
+    initialPayments?: { amount: number; label: string; classCount?: number; classType?: Student['classTypes'][number] }[]
   ) => {
     const newStudent: Student = {
       ...newStudentData,
-      id: `s${Date.now()}`,
+      id: newId('s'),
       joinedDate: new Date().toISOString(),
       status: 'Active'
     };
     await withSync('Add student', () => dbUpsertStudent(newStudent));
     commitStudents([...studentsRef.current, newStudent]);
 
+    // Record each initial payment via the atomic RPC so the balance + payment
+    // land together. We don't need to roll back the student create since RLS
+    // would have failed it earlier if the user weren't allowed.
     if (initialPayments && initialPayments.length > 0) {
-      const newPayments: Payment[] = initialPayments.map((ip, i) => ({
-        id: `p${Date.now()}-${i}`,
-        studentId: newStudent.id,
-        amount: ip.amount,
-        date: newStudent.joinedDate,
-        method: ip.label
-      }));
-      await withSync('Record initial payments', () => Promise.all(newPayments.map(dbInsertPayment)));
-      setPayments(prev => [...prev, ...newPayments]);
+      for (const ip of initialPayments) {
+        const payment: Payment = {
+          id: newId('p'),
+          studentId: newStudent.id,
+          amount: ip.amount,
+          date: newStudent.joinedDate,
+          method: ip.label,
+          classCount: ip.classCount,
+          classType: ip.classType
+        };
+        const { payment: saved, student } = await withSync('Record initial payment', () => rpcRecordPayment(payment));
+        commitPayments([...paymentsRef.current, saved]);
+        mergeStudents([student]);
+      }
     }
-  };
+  }, [commitStudents, commitPayments, withSync]);
 
-  const handleUpdateStudent = async (updatedStudent: Student) => {
-    await withSync('Update student', () => dbUpsertStudent(updatedStudent));
-    commitStudents(studentsRef.current.map(s => s.id === updatedStudent.id ? updatedStudent : s));
-    if (selectedStudent?.id === updatedStudent.id) {
-      setSelectedStudent(updatedStudent);
-    }
-  };
+  const handleUpdateStudent = useCallback(async (updated: Student) => {
+    await withSync('Update student', () => dbUpsertStudent(updated));
+    commitStudents(studentsRef.current.map(s => s.id === updated.id ? updated : s));
+    if (selectedStudent?.id === updated.id) setSelectedStudent(updated);
+  }, [commitStudents, withSync, selectedStudent]);
 
-  const handleDeleteStudent = async (id: string) => {
+  const handleDeleteStudent = useCallback(async (id: string) => {
     await withSync('Delete student', () => dbDeleteStudent(id));
     commitStudents(studentsRef.current.filter(s => s.id !== id));
     if (selectedStudent?.id === id) setSelectedStudent(null);
-  };
+  }, [commitStudents, withSync, selectedStudent]);
 
-  const applyBalanceChanges = async (session: Session, action: 'add' | 'remove') => {
-    const multiplier = action === 'add' ? 1 : -1;
-    // Compute per-student deltas from the session, not from current balances —
-    // that way nothing depends on stale state.
-    const deltas = new Map<string, number>();
-    session.studentIds.forEach(sid => {
-      const statusObj = session.studentStatuses?.find(s => s.studentId === sid);
-      const status = statusObj ? statusObj.status : session.status;
-      const isTrialHere = typeof statusObj?.isTrial === 'boolean' ? statusObj.isTrial : !!session.isTrial;
-      if (isTrialHere) return;
-      const cost = session.price / session.studentIds.length;
-      if (status === AttendanceStatus.Present || status === AttendanceStatus.Late) {
-        deltas.set(sid, (deltas.get(sid) || 0) + cost * multiplier);
-      }
-    });
-    if (deltas.size === 0) return;
+  // ── Sessions (atomic via RPC) ────────────────────────────────────────
+  const handleAddSession = useCallback(async (data: Omit<Session, 'id'>) => {
+    const newSession: Session = { ...data, id: newId('sess') };
+    const { session, students: affected } = await withSync('Add session', () => rpcSaveSession(newSession));
+    commitSessions([...sessionsRef.current, session]);
+    mergeStudents(affected);
+  }, [commitSessions, withSync]);
 
-    // Apply against the ref (latest known state), so two back-to-back calls
-    // (remove old, add new) compose correctly.
-    const updates: Student[] = [];
-    const nextStudents = studentsRef.current.map(s => {
-      const delta = deltas.get(s.id);
-      if (delta === undefined) return s;
-      const updated = { ...s, balance: s.balance + delta };
-      updates.push(updated);
-      return updated;
-    });
-    commitStudents(nextStudents);
-    if (selectedStudent && deltas.has(selectedStudent.id)) {
-      const refreshed = nextStudents.find(s => s.id === selectedStudent.id);
-      if (refreshed) setSelectedStudent(refreshed);
-    }
-    await withSync('Update balances', () => Promise.all(updates.map(dbUpsertStudent)));
-  };
+  const handleUpdateSession = useCallback(async (updated: Session) => {
+    const { session, students: affected } = await withSync('Update session', () => rpcSaveSession(updated));
+    commitSessions(sessionsRef.current.map(s => s.id === session.id ? session : s));
+    mergeStudents(affected);
+  }, [commitSessions, withSync]);
 
-  const handleAddSession = async (newSessionData: Omit<Session, 'id'>) => {
-    const newSession: Session = { ...newSessionData, id: `sess${Date.now()}` };
-    await withSync('Add session', () => dbUpsertSession(newSession));
-    setSessions(prev => [...prev, newSession]);
-    await applyBalanceChanges(newSession, 'add');
-  };
+  const handleDeleteSession = useCallback(async (sessionId: string) => {
+    const { students: affected } = await withSync('Delete session', () => rpcDeleteSession(sessionId));
+    commitSessions(sessionsRef.current.filter(s => s.id !== sessionId));
+    mergeStudents(affected);
+  }, [commitSessions, withSync]);
 
-  const handleUpdateSession = async (updatedSession: Session) => {
-    const oldSession = sessions.find(s => s.id === updatedSession.id);
-    if (oldSession) await applyBalanceChanges(oldSession, 'remove');
-    await withSync('Update session', () => dbUpsertSession(updatedSession));
-    setSessions(prev => prev.map(s => s.id === updatedSession.id ? updatedSession : s));
-    await applyBalanceChanges(updatedSession, 'add');
-  };
-
-  const handleDeleteSession = async (sessionId: string) => {
-    const session = sessions.find(s => s.id === sessionId);
-    if (!session) return;
-    await applyBalanceChanges(session, 'remove');
-    await withSync('Delete session', () => dbDeleteSession(sessionId));
-    setSessions(prev => prev.filter(s => s.id !== sessionId));
-  };
-
-  const handlePayment = async (studentId: string, amount: number, extras?: Partial<Payment>) => {
-    const newPayment: Payment = {
-      id: `p${Date.now()}`,
+  // ── Payments (atomic via RPC) ────────────────────────────────────────
+  const handlePayment = useCallback(async (studentId: string, amount: number, extras?: Partial<Payment>) => {
+    const payment: Payment = {
+      id: newId('p'),
       studentId,
       amount,
       date: extras?.date || new Date().toISOString(),
@@ -232,83 +246,50 @@ const AppInner: React.FC = () => {
       classCount: extras?.classCount,
       classType: extras?.classType
     };
-    // Read from the ref so we get the latest student record — important when
-    // handlePayment is called right after another student-mutating call (e.g.
-    // the Renew flow updates packages first, then logs the payment). Using
-    // stale closure data would clobber that earlier update.
-    const target = studentsRef.current.find(s => s.id === studentId);
-    if (!target) return;
-    const updatedStudent = { ...target, balance: target.balance - amount };
-    await withSync('Save payment', async () => {
-      await dbInsertPayment(newPayment);
-      await dbUpsertStudent(updatedStudent);
-    });
-    setPayments(prev => [...prev, newPayment]);
-    commitStudents(studentsRef.current.map(s => s.id === studentId ? updatedStudent : s));
-    if (selectedStudent?.id === studentId) setSelectedStudent(updatedStudent);
-  };
+    const { payment: saved, student } = await withSync('Save payment', () => rpcRecordPayment(payment));
+    commitPayments([...paymentsRef.current, saved]);
+    mergeStudents([student]);
+  }, [commitPayments, withSync]);
 
-  const handleUpdatePayment = async (updated: Payment) => {
-    const original = payments.find(p => p.id === updated.id);
-    if (!original) return;
-    await withSync('Update payment', () => dbUpdatePayment(updated));
-    setPayments(prev => prev.map(p => p.id === updated.id ? updated : p));
-    if (original.amount !== updated.amount || original.studentId !== updated.studentId) {
-      const baseStudents = studentsRef.current;
-      const nextStudents = baseStudents.map(s => {
-        if (s.id === original.studentId && s.id === updated.studentId) {
-          const delta = updated.amount - original.amount;
-          return { ...s, balance: s.balance - delta };
-        }
-        if (s.id === original.studentId) return { ...s, balance: s.balance + original.amount };
-        if (s.id === updated.studentId) return { ...s, balance: s.balance - updated.amount };
-        return s;
-      });
-      const changed = nextStudents.filter((s, i) => s !== baseStudents[i]);
-      commitStudents(nextStudents);
-      await withSync('Update student balances', () => Promise.all(changed.map(dbUpsertStudent)));
-      if (selectedStudent) {
-        const refreshed = nextStudents.find(s => s.id === selectedStudent.id);
-        if (refreshed) setSelectedStudent(refreshed);
-      }
-    }
-  };
+  const handleUpdatePayment = useCallback(async (updated: Payment) => {
+    const { payment: saved, student } = await withSync('Update payment', () => rpcUpdatePayment(updated));
+    commitPayments(paymentsRef.current.map(p => p.id === saved.id ? saved : p));
+    mergeStudents([student]);
+  }, [commitPayments, withSync]);
 
-  const handleDeletePayment = async (id: string) => {
-    const payment = payments.find(p => p.id === id);
-    if (!payment) return;
-    await withSync('Delete payment', () => dbDeletePayment(id));
-    setPayments(prev => prev.filter(p => p.id !== id));
-    const target = studentsRef.current.find(s => s.id === payment.studentId);
-    if (target) {
-      const restored = { ...target, balance: target.balance + payment.amount };
-      await withSync('Restore balance', () => dbUpsertStudent(restored));
-      commitStudents(studentsRef.current.map(s => s.id === restored.id ? restored : s));
-      if (selectedStudent?.id === restored.id) setSelectedStudent(restored);
-    }
-  };
+  const handleDeletePayment = useCallback(async (id: string) => {
+    const { student } = await withSync('Delete payment', () => rpcDeletePayment(id));
+    commitPayments(paymentsRef.current.filter(p => p.id !== id));
+    if (student) mergeStudents([student]);
+  }, [commitPayments, withSync]);
 
-  const handleAddTeacher = async (data: Omit<Teacher, 'id' | 'joinedDate' | 'status'>) => {
+  // ── Teachers ─────────────────────────────────────────────────────────
+  const handleAddTeacher = useCallback(async (data: Omit<Teacher, 'id' | 'joinedDate' | 'status'>) => {
     const newTeacher: Teacher = {
       ...data,
-      id: `t${Date.now()}`,
-      joinedDate: new Date().toISOString().split('T')[0],
+      id: newId('t'),
+      joinedDate: new Date().toISOString().slice(0, 10),
       status: 'Active'
     };
     await withSync('Add teacher', () => dbUpsertTeacher(newTeacher));
-    setTeachers(prev => [...prev, newTeacher]);
-  };
+    commitTeachers([...teachersRef.current, newTeacher]);
+  }, [commitTeachers, withSync]);
 
-  const handleUpdateTeacher = async (t: Teacher) => {
+  const handleUpdateTeacher = useCallback(async (t: Teacher) => {
     await withSync('Update teacher', () => dbUpsertTeacher(t));
-    setTeachers(prev => prev.map(x => x.id === t.id ? t : x));
-  };
+    commitTeachers(teachersRef.current.map(x => x.id === t.id ? t : x));
+  }, [commitTeachers, withSync]);
 
-  const handleDeleteTeacher = async (id: string) => {
-    await withSync('Delete teacher', () => dbDeleteTeacher(id));
-    setTeachers(prev => prev.filter(t => t.id !== id));
-    setSessions(prev => prev.map(s => s.teacherId === id ? { ...s, teacherId: undefined } : s));
-  };
+  const handleDeleteTeacher = useCallback(async (id: string) => {
+    // RPC cascades: deletes the teacher row and nulls out teacher_id on related
+    // sessions in one transaction; returns the affected sessions for us to reflect locally.
+    const { sessions: affected } = await withSync('Delete teacher', () => rpcDeleteTeacher(id));
+    commitTeachers(teachersRef.current.filter(t => t.id !== id));
+    if (affected.length > 0) {
+      const affectedMap = new Map(affected.map(s => [s.id, s] as const));
+      commitSessions(sessionsRef.current.map(s => affectedMap.get(s.id) ?? s));
+    }
+  }, [commitTeachers, commitSessions, withSync]);
 
   if (loading) {
     return <div className="flex items-center justify-center min-h-screen text-stone-500">Loading…</div>;
@@ -316,6 +297,12 @@ const AppInner: React.FC = () => {
   if (loadError) {
     return <div className="flex items-center justify-center min-h-screen text-red-600 p-8 text-center">Failed to load: {loadError}</div>;
   }
+
+  const handleSignOut = async () => {
+    await signOut();
+    lockAdmin();
+    setAdminUnlocked(false);
+  };
 
   return (
     <div className="flex min-h-screen bg-cream text-stone-900 font-sans">
@@ -360,6 +347,14 @@ const AppInner: React.FC = () => {
             );
           })}
         </nav>
+        <div className="p-4 border-t border-cream-border">
+          <button
+            onClick={handleSignOut}
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-stone-500 hover:text-stone-900 hover:bg-cream rounded-lg"
+          >
+            <LogOut className="w-4 h-4" /> Sign out
+          </button>
+        </div>
       </aside>
 
       <div className="md:hidden fixed top-0 left-0 right-0 bg-white border-b border-cream-border z-20 px-4 py-3 flex justify-between items-center shadow-sm">
@@ -369,7 +364,7 @@ const AppInner: React.FC = () => {
           </div>
           <span className="font-serif text-xl font-semibold text-stone-900 tracking-tight">TutorTrack</span>
         </div>
-        <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}>
+        <button aria-label="Toggle menu" onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}>
           {isMobileMenuOpen ? <X className="w-6 h-6 text-stone-600" /> : <Menu className="w-6 h-6 text-stone-600" />}
         </button>
       </div>
@@ -394,6 +389,12 @@ const AppInner: React.FC = () => {
                 </button>
               );
             })}
+            <button
+              onClick={handleSignOut}
+              className="w-full flex items-center gap-3 px-4 py-4 text-base font-medium rounded-xl text-stone-500 hover:bg-cream"
+            >
+              <LogOut className="w-5 h-5" /> Sign out
+            </button>
           </nav>
         </div>
       )}
@@ -407,10 +408,7 @@ const AppInner: React.FC = () => {
         </header>
 
         {activeTab === 'dashboard' && (
-          <Dashboard
-            students={students}
-            sessions={sessions}
-          />
+          <Dashboard students={students} sessions={sessions} />
         )}
 
         {activeTab === 'admin' && (

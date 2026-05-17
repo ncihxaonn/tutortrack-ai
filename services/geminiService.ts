@@ -1,77 +1,54 @@
-import { GoogleGenAI } from "@google/genai";
-import { Student, Session } from "../types";
+import { Student, Session } from '../types';
+import { ENV } from '../lib/env';
 
-const getAIClient = () => {
-  const apiKey = process.env.API_KEY;
-  if (!apiKey) {
-    console.warn("API Key not found in environment variables.");
-    return null;
+// All AI requests go through the Vercel serverless function at /api/ai so the
+// Gemini API key stays server-side. The previous in-bundle key was extractable
+// by anyone with the JS file.
+
+async function callProxy(task: 'lesson_plan' | 'student_report', payload: unknown): Promise<string> {
+  const res = await fetch(ENV.GEMINI_PROXY_URL, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ task, payload })
+  });
+  if (!res.ok) {
+    let detail = '';
+    try {
+      const body = await res.json() as { error?: string };
+      detail = body.error || '';
+    } catch { /* ignore */ }
+    throw new Error(detail || `AI request failed (${res.status})`);
   }
-  return new GoogleGenAI({ apiKey });
-};
+  const body = await res.json() as { text?: string };
+  return body.text || '';
+}
 
 export const generateStudentReport = async (student: Student, recentSessions: Session[]): Promise<string> => {
-  const ai = getAIClient();
-  if (!ai) return "API Key missing. Cannot generate report.";
-
-  const sessionSummary = recentSessions.map(s => 
-    `- Date: ${new Date(s.date).toLocaleDateString()}, Type: ${s.type}, Topic: ${s.topic}, Status: ${s.status}, Notes: ${s.notes}`
-  ).join('\n');
-
-  const prompt = `
-    You are a professional and encouraging English tutor assistant.
-    Write a short progress report email to the parent of ${student.name} (${student.parentName || 'Parent'}).
-    
-    Student Details:
-    - Enrolled Programs: ${student.classTypes.join(', ')}
-    - Recent Performance Notes: ${student.notes}
-    
-    Recent Sessions:
-    ${sessionSummary}
-
-    The email should be professional, highlight strengths, identify one area for improvement, and encourage the student.
-    Keep it under 200 words.
-  `;
-
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: prompt,
+    return await callProxy('student_report', {
+      studentName: student.name,
+      parentName: student.parentName,
+      classTypes: student.classTypes,
+      notes: student.notes,
+      sessions: recentSessions.map(s => ({
+        date: new Date(s.date).toLocaleDateString(),
+        type: s.type,
+        topic: s.topic,
+        status: s.status,
+        notes: s.notes
+      }))
     });
-    return response.text || "Could not generate report.";
-  } catch (error) {
-    console.error("Error generating report:", error);
-    return "Error contacting AI service. Please try again later.";
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return `Error contacting AI service: ${msg}`;
   }
 };
 
 export const generateLessonPlan = async (topic: string, studentNames: string[], duration: number): Promise<string> => {
-  const ai = getAIClient();
-  if (!ai) return "API Key missing.";
-
-  const prompt = `
-    Create a simple, engaging English lesson plan for:
-    - Topic: ${topic}
-    - Students: ${studentNames.join(', ')}
-    - Duration: ${duration} minutes
-    
-    Include:
-    1. Warm-up activity (5 min)
-    2. Main Concept (10 min)
-    3. Practice Activity (Interactive)
-    4. Cool down / Review
-    
-    Format the output in clear Markdown.
-  `;
-
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: prompt,
-    });
-    return response.text || "Could not generate lesson plan.";
-  } catch (error) {
-    console.error("Error generating lesson plan:", error);
-    return "Error contacting AI service.";
+    return await callProxy('lesson_plan', { topic, studentNames, duration });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return `Error contacting AI service: ${msg}`;
   }
 };

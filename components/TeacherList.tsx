@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Teacher, StudentStatus, Session } from '../types';
 import { Search, Plus, GraduationCap, Trash2, Archive, RotateCcw, AlertTriangle, X, Save } from 'lucide-react';
 
@@ -41,13 +41,23 @@ const TeacherList: React.FC<TeacherListProps> = ({ teachers, sessions, onAddTeac
     setNotes(t.notes);
   };
 
-  const filtered = teachers.filter(t =>
-    t.status === viewStatus &&
-    t.name.toLowerCase().includes(searchTerm.toLowerCase())
+  const filtered = useMemo(
+    () => teachers.filter(t =>
+      t.status === viewStatus &&
+      t.name.toLowerCase().includes(searchTerm.toLowerCase())
+    ),
+    [teachers, viewStatus, searchTerm]
   );
 
-  const sessionsCountFor = (teacherId: string) =>
-    sessions.filter(s => s.teacherId === teacherId).length;
+  // Precompute teacher → session count once instead of scanning all sessions per card.
+  const sessionsCountByTeacher = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const s of sessions) {
+      if (!s.teacherId) continue;
+      map.set(s.teacherId, (map.get(s.teacherId) || 0) + 1);
+    }
+    return map;
+  }, [sessions]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -159,7 +169,7 @@ const TeacherList: React.FC<TeacherListProps> = ({ teachers, sessions, onAddTeac
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filtered.map(t => {
-            const sessionCount = sessionsCountFor(t.id);
+            const sessionCount = sessionsCountByTeacher.get(t.id) || 0;
             return (
               <div key={t.id} className="bg-white rounded-2xl border border-cream-border shadow-sm p-5 flex flex-col gap-3">
                 <div className="flex items-start justify-between">

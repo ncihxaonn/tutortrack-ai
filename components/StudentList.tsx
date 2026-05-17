@@ -3,13 +3,13 @@ import { Student, ClassType, StudentStatus, ClassPackage } from '../types';
 import { Search, Plus, User, Trash2, Archive, RotateCcw, AlertTriangle } from 'lucide-react';
 import { Currency, CURRENCY_SYMBOLS, formatMoney } from '../lib/currency';
 
-export interface InitialPayment { amount: number; label: string; }
+export interface InitialPayment { amount: number; label: string; classCount?: number; classType?: ClassType; }
 
 interface StudentListProps {
   students: Student[];
-  onAddStudent: (student: Omit<Student, 'id' | 'joinedDate' | 'status'>, initialPayments?: InitialPayment[]) => void;
-  onUpdateStudent: (student: Student) => void;
-  onDeleteStudent: (id: string) => void;
+  onAddStudent: (student: Omit<Student, 'id' | 'joinedDate' | 'status'>, initialPayments?: InitialPayment[]) => Promise<void> | void;
+  onUpdateStudent: (student: Student) => Promise<void> | void;
+  onDeleteStudent: (id: string) => Promise<void> | void;
   onSelectStudent: (student: Student) => void;
   currency: Currency;
   rate: number;
@@ -19,15 +19,17 @@ const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpd
   const [viewStatus, setViewStatus] = useState<StudentStatus>('Active');
   const [searchTerm, setSearchTerm] = useState('');
   const [isAdding, setIsAdding] = useState(false);
-  
+
   // Delete confirmation state
   const [studentToDelete, setStudentToDelete] = useState<Student | null>(null);
-  
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+
   // New student form state
   const [name, setName] = useState('');
   const [parentName, setParentName] = useState('');
   const [notes, setNotes] = useState('');
-  
+
   // Package Data
   const [oneOnOneEnabled, setOneOnOneEnabled] = useState(false);
   const [oneOnOneClasses, setOneOnOneClasses] = useState(0);
@@ -43,54 +45,76 @@ const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpd
      s.parentName?.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+    setSaveError(null);
+
+    if (!name.trim()) {
+      setSaveError('Student name is required.');
+      return;
+    }
     if (!oneOnOneEnabled && !groupEnabled) {
-        alert("Please enable at least one class program.");
-        return;
+      setSaveError('Enable at least one class program.');
+      return;
+    }
+    if (oneOnOneEnabled && oneOnOneClasses < 0) {
+      setSaveError('One-on-One session count cannot be negative.');
+      return;
+    }
+    if (groupEnabled && groupClasses < 0) {
+      setSaveError('Group session count cannot be negative.');
+      return;
     }
 
     const classTypes: ClassType[] = [];
     const packages: ClassPackage[] = [];
     let initialBalance = 0;
-    let autoNotes = "";
+    let autoNotes = '';
     const initialPayments: InitialPayment[] = [];
 
     if (oneOnOneEnabled) {
-        classTypes.push(ClassType.OneOnOne);
-        packages.push({ type: ClassType.OneOnOne, total: oneOnOneClasses, active: true });
-        initialBalance -= oneOnOnePaid; // Credit
-        if (oneOnOnePaid > 0) {
-            autoNotes += `Initial Payment: ${CURRENCY_SYMBOLS.CNY}${oneOnOnePaid} for ${oneOnOneClasses} One-on-One sessions. `;
-            initialPayments.push({ amount: oneOnOnePaid, label: `Initial One-on-One package` });
-        }
+      classTypes.push(ClassType.OneOnOne);
+      packages.push({ type: ClassType.OneOnOne, total: oneOnOneClasses, active: true });
+      initialBalance -= oneOnOnePaid;
+      if (oneOnOnePaid > 0) {
+        autoNotes += `Initial Payment: ${CURRENCY_SYMBOLS.CNY}${oneOnOnePaid} for ${oneOnOneClasses} One-on-One sessions. `;
+        // Include classCount/classType so this payment is visible in the
+        // payment-derived package view (the single source of truth).
+        initialPayments.push({ amount: oneOnOnePaid, label: 'Initial One-on-One package', classCount: oneOnOneClasses, classType: ClassType.OneOnOne });
+      }
     }
 
     if (groupEnabled) {
-        classTypes.push(ClassType.Group);
-        packages.push({ type: ClassType.Group, total: groupClasses, active: true });
-        initialBalance -= groupPaid; // Credit
-        if (groupPaid > 0) {
-            autoNotes += `Initial Payment: ${CURRENCY_SYMBOLS.CNY}${groupPaid} for ${groupClasses} One-on-Two sessions. `;
-            initialPayments.push({ amount: groupPaid, label: `Initial One-on-Two package` });
-        }
+      classTypes.push(ClassType.Group);
+      packages.push({ type: ClassType.Group, total: groupClasses, active: true });
+      initialBalance -= groupPaid;
+      if (groupPaid > 0) {
+        autoNotes += `Initial Payment: ${CURRENCY_SYMBOLS.CNY}${groupPaid} for ${groupClasses} One-on-Two sessions. `;
+        initialPayments.push({ amount: groupPaid, label: 'Initial One-on-Two package', classCount: groupClasses, classType: ClassType.Group });
+      }
     }
 
-    const finalNotes = notes + (notes && autoNotes ? "\n" : "") + autoNotes;
+    const finalNotes = notes + (notes && autoNotes ? '\n' : '') + autoNotes;
 
-    onAddStudent({
-        name,
-        parentName,
+    try {
+      setIsSaving(true);
+      await onAddStudent({
+        name: name.trim(),
+        parentName: parentName.trim() || undefined,
         classTypes,
         packages,
         notes: finalNotes,
         balance: initialBalance,
         progressHistory: []
-    }, initialPayments);
-
-    setIsAdding(false);
-    resetForm();
+      }, initialPayments);
+      setIsAdding(false);
+      resetForm();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setSaveError(`Failed to create student: ${msg}`);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const resetForm = () => {
@@ -103,18 +127,27 @@ const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpd
     setGroupEnabled(false);
     setGroupClasses(0);
     setGroupPaid(0);
-  }
-
-  const handleDeleteClick = (e: React.MouseEvent, student: Student) => {
-      e.stopPropagation();
-      setStudentToDelete(student);
+    setSaveError(null);
   };
 
-  const confirmDelete = () => {
-      if (studentToDelete) {
-          onDeleteStudent(studentToDelete.id);
-          setStudentToDelete(null);
-      }
+  const handleDeleteClick = (e: React.MouseEvent, student: Student) => {
+    e.stopPropagation();
+    setStudentToDelete(student);
+    setSaveError(null);
+  };
+
+  const confirmDelete = async () => {
+    if (!studentToDelete) return;
+    try {
+      setIsSaving(true);
+      await onDeleteStudent(studentToDelete.id);
+      setStudentToDelete(null);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setSaveError(`Failed to delete: ${msg}`);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -267,20 +300,26 @@ const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpd
               className="w-full p-2 border rounded-md"
               rows={2}
             />
-            
+
+            {saveError && (
+              <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md p-2">{saveError}</p>
+            )}
+
             <div className="flex justify-end gap-2">
-              <button 
-                type="button" 
+              <button
+                type="button"
                 onClick={() => { setIsAdding(false); resetForm(); }}
-                className="px-4 py-2 text-stone-600 hover:bg-cream rounded-md"
+                disabled={isSaving}
+                className="px-4 py-2 text-stone-600 hover:bg-cream rounded-md disabled:opacity-50"
               >
                 Cancel
               </button>
-              <button 
+              <button
                 type="submit"
-                className="px-4 py-2 bg-coral-600 text-white rounded-md hover:bg-coral-700"
+                disabled={isSaving}
+                className="px-4 py-2 bg-coral-600 text-white rounded-md hover:bg-coral-700 disabled:opacity-50"
               >
-                Create Student
+                {isSaving ? 'Saving…' : 'Create Student'}
               </button>
             </div>
           </form>
@@ -314,17 +353,11 @@ const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpd
                 </div>
                 <h3 className="font-semibold text-stone-800">{student.name}</h3>
                 <p className="text-sm text-stone-500 mb-1">{student.parentName || 'No parent listed'}</p>
-                {student.packages && student.packages.length > 0 ? (
-                    <div className="flex flex-col gap-1 mb-4">
-                        {student.packages.map((pkg, idx) => (
-                             <p key={idx} className="text-xs text-stone-400">
-                                {pkg.type === ClassType.OneOnOne ? '1-on-1' : 'Group'}: {pkg.total} classes
-                             </p>
-                        ))}
-                    </div>
-                ) : (
-                    <div className="h-4 mb-4"></div>
-                )}
+                {/* Card-level package counts intentionally omitted — accurate per-package
+                    progress is shown in the detail drawer (derived from payments). The
+                    legacy student.packages totals diverged after edits, which led to
+                    confusing numbers on the list and the detail screen. */}
+                <div className="h-4 mb-4"></div>
             </div>
             
             <div className="pt-4 border-t border-slate-50 flex items-end justify-between">
@@ -378,20 +411,23 @@ const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpd
                       </div>
                       <h3 className="text-lg font-serif font-semibold tracking-tight text-stone-800 mb-2">Delete Student?</h3>
                       <p className="text-stone-500 text-sm mb-6">
-                          Are you sure you want to permanently delete <strong>{studentToDelete.name}</strong>? This action cannot be undone and all data will be lost.
+                          Permanently delete <strong>{studentToDelete.name}</strong>? Their student record will be removed; related sessions and payments are kept for accounting. This action cannot be undone.
                       </p>
+                      {saveError && <p className="text-sm text-red-600 mb-3">{saveError}</p>}
                       <div className="flex gap-3 w-full">
-                          <button 
-                              onClick={() => setStudentToDelete(null)}
-                              className="flex-1 px-4 py-2 border border-cream-border rounded-lg text-stone-600 font-medium hover:bg-cream"
+                          <button
+                              onClick={() => { setStudentToDelete(null); setSaveError(null); }}
+                              disabled={isSaving}
+                              className="flex-1 px-4 py-2 border border-cream-border rounded-lg text-stone-600 font-medium hover:bg-cream disabled:opacity-50"
                           >
                               Cancel
                           </button>
-                          <button 
+                          <button
                               onClick={confirmDelete}
-                              className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700"
+                              disabled={isSaving}
+                              className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 disabled:opacity-50"
                           >
-                              Delete
+                              {isSaving ? 'Deleting…' : 'Delete'}
                           </button>
                       </div>
                   </div>

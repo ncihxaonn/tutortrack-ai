@@ -1,35 +1,40 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Session, Student, AttendanceStatus, ClassType, StudentSessionStatus, SkillProgress, Teacher } from '../types';
-import { Calendar as CalendarIcon, Clock, CheckCircle, XCircle, AlertCircle, AlertTriangle, Sparkles, ChevronLeft, ChevronRight, X, Edit, Trash2, Search, ChevronDown, ChevronUp, MoreVertical, TrendingUp, LayoutGrid, List } from 'lucide-react';
+import { Calendar as CalendarIcon, CheckCircle, AlertTriangle, Sparkles, ChevronLeft, ChevronRight, X, Trash2, Search, ChevronDown, ChevronUp, MoreVertical, TrendingUp } from 'lucide-react';
 import { generateLessonPlan } from '../services/geminiService';
 import { PRICE_1ON1, PRICE_GROUP } from '../constants';
+import { localDateKey, localDateTimeToISO, todayLocalKey, newId } from '../lib/dateUtils';
 
 interface SessionLogProps {
   sessions: Session[];
   students: Student[];
   teachers: Teacher[];
-  onAddSession: (session: Omit<Session, 'id'>) => void;
-  onUpdateSession: (session: Session) => void;
-  onDeleteSession: (id: string) => void;
-  onUpdateStudent: (student: Student) => void;
+  onAddSession: (session: Omit<Session, 'id'>) => Promise<void> | void;
+  onUpdateSession: (session: Session) => Promise<void> | void;
+  onDeleteSession: (id: string) => Promise<void> | void;
+  onUpdateStudent: (student: Student) => Promise<void> | void;
   onSelectStudent?: (student: Student) => void;
 }
 
 type ViewMode = 'year' | 'month' | 'week';
 
-const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, onAddSession, onUpdateSession, onDeleteSession, onUpdateStudent, onSelectStudent }) => {
+const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, onAddSession, onUpdateSession, onDeleteSession, onUpdateStudent }) => {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewMode, setViewMode] = useState<ViewMode>('month');
-  
+
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Form State
   const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
   const [studentStatuses, setStudentStatuses] = useState<Record<string, AttendanceStatus>>({});
-  
+  // Per-student trial overrides for mixed group sessions.
+  const [studentTrials, setStudentTrials] = useState<Record<string, boolean>>({});
+
   const [date, setDate] = useState('');
   const [time, setTime] = useState('14:00');
   const [topic, setTopic] = useState('');
@@ -37,11 +42,11 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
   const [notes, setNotes] = useState('');
   const [isTrial, setIsTrial] = useState(false);
   const [teacherId, setTeacherId] = useState<string>('');
-  
+
   // Progress Editing State
   const [progressModalOpen, setProgressModalOpen] = useState(false);
   const [currentProgressStudentId, setCurrentProgressStudentId] = useState<string | null>(null);
-  const [tempProgress, setTempProgress] = useState<Record<string, Partial<SkillProgress>>>({}); 
+  const [tempProgress, setTempProgress] = useState<Record<string, Partial<SkillProgress>>>({});
 
   // Dropdown UI State
   const [isStudentDropdownOpen, setIsStudentDropdownOpen] = useState(false);
@@ -51,16 +56,42 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
   const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
   const [generatedPlan, setGeneratedPlan] = useState('');
 
+  // Memoize lookup maps so calendar rows aren't doing N*M finds.
+  const studentsById = useMemo(() => {
+    const m = new Map<string, Student>();
+    students.forEach(s => m.set(s.id, s));
+    return m;
+  }, [students]);
+  const teachersById = useMemo(() => {
+    const m = new Map<string, Teacher>();
+    teachers.forEach(t => m.set(t.id, t));
+    return m;
+  }, [teachers]);
+  const sessionsByLocalDay = useMemo(() => {
+    const m = new Map<string, Session[]>();
+    for (const s of sessions) {
+      const key = localDateKey(s.date);
+      const arr = m.get(key);
+      if (arr) arr.push(s);
+      else m.set(key, [s]);
+    }
+    // Sort each day's sessions by time once, so the calendar renders chronologically.
+    for (const arr of m.values()) {
+      arr.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    }
+    return m;
+  }, [sessions]);
+
   // Filter students for dropdown
-  const filteredStudents = students.filter(s => 
-    s.status === 'Active' && 
+  const filteredStudents = useMemo(() => students.filter(s =>
+    s.status === 'Active' &&
     s.name.toLowerCase().includes(studentSearch.toLowerCase())
-  );
+  ), [students, studentSearch]);
 
   // Calendar Logic Helpers
-  const getDaysInMonth = (date: Date) => {
-    const year = date.getFullYear();
-    const month = date.getMonth();
+  const getDaysInMonth = (d: Date) => {
+    const year = d.getFullYear();
+    const month = d.getMonth();
     const days = new Date(year, month + 1, 0).getDate();
     const firstDay = new Date(year, month, 1).getDay();
     return { days, firstDay, year, month };
@@ -71,7 +102,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
     const day = date.getDay();
     const diff = date.getDate() - day;
     return new Date(date.setDate(diff));
-  }
+  };
 
   // Navigation
   const handlePrev = () => {
@@ -95,28 +126,23 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
   };
 
   const getHeaderText = () => {
-      if (viewMode === 'year') return currentDate.getFullYear().toString();
-      if (viewMode === 'month') return currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-      if (viewMode === 'week') {
-          const start = getStartOfWeek(currentDate);
-          const end = new Date(start);
-          end.setDate(end.getDate() + 6);
-          // Handle crossing months/years
-          if (start.getMonth() === end.getMonth()) {
-              return `${start.toLocaleDateString('en-US', { month: 'long' })} ${start.getDate()} - ${end.getDate()}, ${start.getFullYear()}`;
-          }
-          return `${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+    if (viewMode === 'year') return currentDate.getFullYear().toString();
+    if (viewMode === 'month') return currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    if (viewMode === 'week') {
+      const start = getStartOfWeek(currentDate);
+      const end = new Date(start);
+      end.setDate(end.getDate() + 6);
+      if (start.getMonth() === end.getMonth()) {
+        return `${start.toLocaleDateString('en-US', { month: 'long' })} ${start.getDate()} - ${end.getDate()}, ${start.getFullYear()}`;
       }
-      return '';
-  }
+      return `${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+    }
+    return '';
+  };
 
   const openAddModal = (dateStr?: string) => {
     resetForm();
-    if (dateStr) {
-        setDate(dateStr);
-    } else {
-        setDate(new Date().toISOString().split('T')[0]);
-    }
+    setDate(dateStr ?? todayLocalKey());
     setEditingSessionId(null);
     setIsModalOpen(true);
   };
@@ -124,23 +150,26 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
   const openEditModal = (session: Session) => {
     setEditingSessionId(session.id);
     setSelectedStudents(session.studentIds);
-    
-    // Convert array of statuses to map for easy form handling
+
     const statusMap: Record<string, AttendanceStatus> = {};
-    if (session.studentStatuses) {
-        session.studentStatuses.forEach(s => statusMap[s.studentId] = s.status);
+    const trialMap: Record<string, boolean> = {};
+    if (session.studentStatuses && session.studentStatuses.length > 0) {
+      session.studentStatuses.forEach(s => {
+        statusMap[s.studentId] = s.status;
+        if (typeof s.isTrial === 'boolean') trialMap[s.studentId] = s.isTrial;
+      });
     } else {
-        session.studentIds.forEach(id => statusMap[id] = session.status);
+      session.studentIds.forEach(id => { statusMap[id] = session.status; });
     }
     setStudentStatuses(statusMap);
+    setStudentTrials(trialMap);
 
-    // Use local components for both date and time so the round-trip stays consistent.
-    // Mixing toISOString() (UTC) with toLocaleTimeString (local) caused the date to drift
-    // near midnight, and the time to display in a different zone than it was typed.
-    const _d = new Date(session.date);
-    const _pad = (n: number) => String(n).padStart(2, '0');
-    setDate(`${_d.getFullYear()}-${_pad(_d.getMonth() + 1)}-${_pad(_d.getDate())}`);
-    setTime(`${_pad(_d.getHours())}:${_pad(_d.getMinutes())}`);
+    // Local components only — mixing toISOString() with toLocaleTimeString caused
+    // the date to drift near midnight, and the time to display in a different zone.
+    const d = new Date(session.date);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    setDate(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
+    setTime(`${pad(d.getHours())}:${pad(d.getMinutes())}`);
     setTopic(session.topic);
     setSessionType(session.type);
     setNotes(session.notes);
@@ -148,166 +177,198 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
     setTeacherId(session.teacherId || '');
     setGeneratedPlan('');
     setTempProgress({});
+    setSaveError(null);
     setIsModalOpen(true);
   };
 
   const handleStudentToggle = (id: string) => {
-    let newSelected = [];
+    let newSelected: string[];
     if (selectedStudents.includes(id)) {
       newSelected = selectedStudents.filter(s => s !== id);
       const newStatuses = { ...studentStatuses };
       delete newStatuses[id];
       setStudentStatuses(newStatuses);
+      const nextTrials = { ...studentTrials };
+      delete nextTrials[id];
+      setStudentTrials(nextTrials);
     } else {
-      if (selectedStudents.length >= 2) return; 
+      if (selectedStudents.length >= 2) return;
       newSelected = [...selectedStudents, id];
       setStudentStatuses({ ...studentStatuses, [id]: AttendanceStatus.Present });
     }
     setSelectedStudents(newSelected);
-    
+
     if (newSelected.length === 2) setSessionType(ClassType.Group);
     else if (newSelected.length === 1) setSessionType(ClassType.OneOnOne);
   };
 
   const handleStatusChange = (studentId: string, status: AttendanceStatus) => {
-      setStudentStatuses({ ...studentStatuses, [studentId]: status });
-  }
+    setStudentStatuses({ ...studentStatuses, [studentId]: status });
+  };
+
+  const toggleStudentTrial = (studentId: string) => {
+    setStudentTrials(prev => ({ ...prev, [studentId]: !prev[studentId] }));
+  };
 
   // --- Progress Handling ---
 
   const openProgressModal = (studentId: string) => {
-      setCurrentProgressStudentId(studentId);
-      
-      if (tempProgress[studentId]) {
-      } else {
-          const s = students.find(st => st.id === studentId);
-          const latest = s?.progressHistory && s.progressHistory.length > 0 
-              ? s.progressHistory[s.progressHistory.length - 1]
-              : { reading: 50, writing: 50, listening: 50, speaking: 50, notes: '' };
-          
-          setTempProgress(prev => ({
-              ...prev,
-              [studentId]: {
-                  reading: latest.reading,
-                  writing: latest.writing,
-                  listening: latest.listening,
-                  speaking: latest.speaking,
-                  notes: '', 
-              }
-          }));
-      }
-      setProgressModalOpen(true);
+    setCurrentProgressStudentId(studentId);
+    if (!tempProgress[studentId]) {
+      const s = students.find(st => st.id === studentId);
+      const latest = s?.progressHistory && s.progressHistory.length > 0
+        ? s.progressHistory[s.progressHistory.length - 1]
+        : { reading: 50, writing: 50, listening: 50, speaking: 50, notes: '' };
+
+      setTempProgress(prev => ({
+        ...prev,
+        [studentId]: {
+          reading: latest!.reading,
+          writing: latest!.writing,
+          listening: latest!.listening,
+          speaking: latest!.speaking,
+          notes: ''
+        }
+      }));
+    }
+    setProgressModalOpen(true);
   };
 
-  const updateTempProgress = (field: keyof SkillProgress, value: any) => {
-      if (!currentProgressStudentId) return;
-      setTempProgress(prev => ({
-          ...prev,
-          [currentProgressStudentId]: {
-              ...prev[currentProgressStudentId],
-              [field]: value
-          }
-      }));
+  const updateTempProgress = (field: keyof SkillProgress, value: number | string) => {
+    if (!currentProgressStudentId) return;
+    setTempProgress(prev => ({
+      ...prev,
+      [currentProgressStudentId]: {
+        ...prev[currentProgressStudentId],
+        [field]: value
+      }
+    }));
   };
 
   const handleGeneratePlan = async () => {
     if (!topic || selectedStudents.length === 0) return;
     setIsGeneratingPlan(true);
-    const studentNames = students.filter(s => selectedStudents.includes(s.id)).map(s => s.name);
-    const plan = await generateLessonPlan(topic, studentNames, 60);
-    setGeneratedPlan(plan);
-    setNotes(prev => prev + (prev ? '\n\n' : '') + "Lesson Plan: " + topic);
-    setIsGeneratingPlan(false);
+    try {
+      const studentNames = students.filter(s => selectedStudents.includes(s.id)).map(s => s.name);
+      const plan = await generateLessonPlan(topic, studentNames, 60);
+      setGeneratedPlan(plan);
+      setNotes(prev => prev + (prev ? '\n\n' : '') + 'Lesson Plan: ' + topic);
+    } finally {
+      setIsGeneratingPlan(false);
+    }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (selectedStudents.length === 0) return;
 
-    const pricePerStudent = sessionType === ClassType.OneOnOne ? PRICE_1ON1 : PRICE_GROUP;
-    const totalPrice = isTrial ? 0 : pricePerStudent * selectedStudents.length;
+    setIsSaving(true);
+    setSaveError(null);
+    try {
+      // Per-student trial overrides count toward who's paying — if everyone is on
+      // trial the session is effectively free, otherwise we split by non-trial heads.
+      const nonTrialCount = isTrial
+        ? 0
+        : selectedStudents.filter(sid => !studentTrials[sid]).length;
+      const pricePerStudent = sessionType === ClassType.OneOnOne ? PRICE_1ON1 : PRICE_GROUP;
+      const totalPrice = isTrial ? 0 : pricePerStudent * nonTrialCount;
 
-    const studentStatusesArray: StudentSessionStatus[] = selectedStudents.map(id => ({
-        studentId: id,
-        status: studentStatuses[id] || AttendanceStatus.Present
-    }));
+      const studentStatusesArray: StudentSessionStatus[] = selectedStudents.map(id => {
+        const entry: StudentSessionStatus = {
+          studentId: id,
+          status: studentStatuses[id] || AttendanceStatus.Present
+        };
+        if (typeof studentTrials[id] === 'boolean') entry.isTrial = studentTrials[id];
+        return entry;
+      });
 
-    const overallStatus = AttendanceStatus.Present;
+      // Summary status: use the worst non-Present status (Cancelled > Absent > Late > Present)
+      // so a single absent student doesn't lie about a session being fully attended.
+      const overallStatus = (() => {
+        const all = studentStatusesArray.map(s => s.status);
+        if (all.includes(AttendanceStatus.Cancelled)) return AttendanceStatus.Cancelled;
+        if (all.includes(AttendanceStatus.Absent)) return AttendanceStatus.Absent;
+        if (all.includes(AttendanceStatus.Late)) return AttendanceStatus.Late;
+        return AttendanceStatus.Present;
+      })();
 
-    // Convert local date (YYYY-MM-DD) + time (HH:MM) into a proper ISO UTC string.
-    // Plain concatenation produced an ambiguous string (no timezone), which Postgres
-    // treats as UTC — causing the displayed time to drift by the user's timezone offset.
-    const _parts = date.split('-').map(Number);
-    const _tparts = time.split(':').map(Number);
-    const _sessionISO = new Date(_parts[0], (_parts[1] || 1) - 1, _parts[2] || 1, _tparts[0] || 0, _tparts[1] || 0, 0).toISOString();
+      const sessionISO = localDateTimeToISO(date, time);
+      const sessionData: Omit<Session, 'id'> = {
+        studentIds: selectedStudents,
+        date: sessionISO,
+        durationMinutes: 60,
+        status: overallStatus,
+        studentStatuses: studentStatusesArray,
+        type: sessionType,
+        topic,
+        notes: generatedPlan ? `${notes}\n\n--- AI Plan ---\n${generatedPlan}` : notes,
+        price: totalPrice,
+        isTrial,
+        teacherId: teacherId || undefined
+      };
 
-    const sessionData = {
-      studentIds: selectedStudents,
-      date: _sessionISO,
-      durationMinutes: 60,
-      status: overallStatus,
-      studentStatuses: studentStatusesArray,
-      type: sessionType,
-      topic,
-      notes: generatedPlan ? `${notes}\n\n--- AI Plan ---\n${generatedPlan}` : notes,
-      price: totalPrice,
-      isTrial,
-      teacherId: teacherId || undefined
-    };
+      if (editingSessionId) {
+        await onUpdateSession({ ...sessionData, id: editingSessionId });
+      } else {
+        await onAddSession(sessionData);
+      }
 
-    if (editingSessionId) {
-        onUpdateSession({ ...sessionData, id: editingSessionId });
-    } else {
-        onAddSession(sessionData);
-    }
-
-    selectedStudents.forEach(stuId => {
+      // Then persist progress notes for each student in parallel.
+      await Promise.all(selectedStudents.map(async stuId => {
         const pending = tempProgress[stuId];
-        if (pending) {
-            const student = students.find(s => s.id === stuId);
-            if (student) {
-                const newEntry: SkillProgress = {
-                    id: `ph${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-                    date: date, 
-                    reading: pending.reading || 50,
-                    writing: pending.writing || 50,
-                    listening: pending.listening || 50,
-                    speaking: pending.speaking || 50,
-                    notes: pending.notes || `Progress note from session: ${topic}`
-                };
-                
-                const updatedHistory = [...(student.progressHistory || []), newEntry]
-                    .sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-                
-                onUpdateStudent({
-                    ...student,
-                    progressHistory: updatedHistory
-                });
-            }
-        }
-    });
+        if (!pending) return;
+        const student = students.find(s => s.id === stuId);
+        if (!student) return;
+        const newEntry: SkillProgress = {
+          id: newId('ph'),
+          date,
+          reading: pending.reading ?? 50,
+          writing: pending.writing ?? 50,
+          listening: pending.listening ?? 50,
+          speaking: pending.speaking ?? 50,
+          notes: pending.notes || `Progress note from session: ${topic}`
+        };
+        const updatedHistory = [...(student.progressHistory || []), newEntry]
+          .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        await onUpdateStudent({ ...student, progressHistory: updatedHistory });
+      }));
 
-    setIsModalOpen(false);
-    resetForm();
+      setIsModalOpen(false);
+      resetForm();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setSaveError(`Failed to save: ${msg}`);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleDelete = () => {
     if (editingSessionId) {
-        setSessionToDelete(editingSessionId);
+      setSessionToDelete(editingSessionId);
     }
-  }
+  };
 
-  const confirmDeleteSession = () => {
-    if (sessionToDelete) {
-        onDeleteSession(sessionToDelete);
-        setSessionToDelete(null);
-        setIsModalOpen(false);
+  const confirmDeleteSession = async () => {
+    if (!sessionToDelete) return;
+    setIsSaving(true);
+    setSaveError(null);
+    try {
+      await onDeleteSession(sessionToDelete);
+      setSessionToDelete(null);
+      setIsModalOpen(false);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setSaveError(`Failed to delete: ${msg}`);
+    } finally {
+      setIsSaving(false);
     }
-  }
+  };
 
   const resetForm = () => {
     setSelectedStudents([]);
     setStudentStatuses({});
+    setStudentTrials({});
     setTopic('');
     setNotes('');
     setGeneratedPlan('');
@@ -319,6 +380,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
     setCurrentProgressStudentId(null);
     setIsTrial(false);
     setTeacherId('');
+    setSaveError(null);
   };
 
   // --- Renderers ---
@@ -330,250 +392,243 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
     const allSlots = [...blanks, ...daySlots];
 
     return (
-        <div className="grid grid-cols-7 gap-px bg-stone-200 rounded-lg overflow-hidden border border-cream-border animate-in fade-in">
-            {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
-                <div key={d} className="bg-cream p-2 text-center text-xs font-semibold text-stone-500 uppercase">
-                    {d}
-                </div>
-            ))}
-            {allSlots.map((day, index) => {
-                if (!day) return <div key={`blank-${index}`} className="bg-white h-32 md:h-40" />;
-                
-                const currentDayStr = `${year}-${(month + 1).toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
-                const daySessions = sessions.filter(s => s.date.startsWith(currentDayStr));
+      <div className="grid grid-cols-7 gap-px bg-stone-200 rounded-lg overflow-hidden border border-cream-border animate-in fade-in">
+        {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
+          <div key={d} className="bg-cream p-2 text-center text-xs font-semibold text-stone-500 uppercase">
+            {d}
+          </div>
+        ))}
+        {allSlots.map((day, index) => {
+          if (!day) return <div key={`blank-${index}`} className="bg-white h-32 md:h-40" />;
 
-                return (
-                    <div 
-                        key={day} 
-                        onClick={() => openAddModal(currentDayStr)}
-                        className="bg-white h-32 md:h-40 p-2 border-t border-slate-50 hover:bg-cream transition-colors cursor-pointer overflow-y-auto"
-                    >
-                        <div className="flex justify-between items-start mb-1">
-                            <span className={`text-sm font-semibold ${
-                                new Date().toDateString() === new Date(year, month, day as number).toDateString() 
-                                ? 'bg-coral-600 text-white w-6 h-6 flex items-center justify-center rounded-full' 
-                                : 'text-stone-700'
-                            }`}>
-                                {day}
-                            </span>
-                        </div>
-                        <div className="space-y-1">
-                            {daySessions.map(session => (
-                                <div
-                                    key={session.id}
-                                    onClick={(e) => { e.stopPropagation(); openEditModal(session); }}
-                                    className={`text-[10px] p-1.5 rounded border border-l-2 shadow-sm cursor-pointer hover:opacity-80 transition-opacity ${
-                                        session.isTrial
-                                        ? 'bg-amber-50 border-amber-100 border-l-amber-500 text-amber-800'
-                                        : session.type === ClassType.OneOnOne
-                                        ? 'bg-blue-50 border-blue-100 border-l-blue-500 text-blue-700'
-                                        : 'bg-orange-50 border-orange-100 border-l-orange-500 text-orange-700'
-                                    }`}
-                                >
-                                    <div className="font-semibold truncate flex items-center gap-1">
-                                        {session.isTrial && <span className="text-[8px] uppercase font-bold bg-amber-200 text-amber-900 px-1 rounded">Trial</span>}
-                                        <span className="truncate">{session.topic}</span>
-                                    </div>
-                                    <div className="text-xs opacity-75">
-                                        {new Date(session.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                                        {session.teacherId && (() => {
-                                            const t = teachers.find(tt => tt.id === session.teacherId);
-                                            return t ? <span className="ml-1">· {t.name.split(' ')[0]}</span> : null;
-                                        })()}
-                                    </div>
-                                    <div className="truncate opacity-75">
-                                        {session.studentIds.map(sid => students.find(s => s.id === sid)?.name.split(' ')[0]).join(', ')}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
+          const pad = (n: number) => String(n).padStart(2, '0');
+          const currentDayStr = `${year}-${pad(month + 1)}-${pad(day as number)}`;
+          const daySessions = sessionsByLocalDay.get(currentDayStr) || [];
+
+          return (
+            <div
+              key={day}
+              onClick={() => openAddModal(currentDayStr)}
+              className="bg-white h-32 md:h-40 p-2 border-t border-slate-50 hover:bg-cream transition-colors cursor-pointer overflow-y-auto"
+            >
+              <div className="flex justify-between items-start mb-1">
+                <span className={`text-sm font-semibold ${
+                  new Date().toDateString() === new Date(year, month, day as number).toDateString()
+                    ? 'bg-coral-600 text-white w-6 h-6 flex items-center justify-center rounded-full'
+                    : 'text-stone-700'
+                }`}>
+                  {day}
+                </span>
+              </div>
+              <div className="space-y-1">
+                {daySessions.map(session => (
+                  <div
+                    key={session.id}
+                    onClick={(e) => { e.stopPropagation(); openEditModal(session); }}
+                    className={`text-[10px] p-1.5 rounded border border-l-2 shadow-sm cursor-pointer hover:opacity-80 transition-opacity ${
+                      session.isTrial
+                        ? 'bg-amber-50 border-amber-100 border-l-amber-500 text-amber-800'
+                        : session.type === ClassType.OneOnOne
+                        ? 'bg-blue-50 border-blue-100 border-l-blue-500 text-blue-700'
+                        : 'bg-orange-50 border-orange-100 border-l-orange-500 text-orange-700'
+                    }`}
+                  >
+                    <div className="font-semibold truncate flex items-center gap-1">
+                      {session.isTrial && <span className="text-[8px] uppercase font-bold bg-amber-200 text-amber-900 px-1 rounded">Trial</span>}
+                      <span className="truncate">{session.topic}</span>
                     </div>
-                );
-            })}
-        </div>
+                    <div className="text-xs opacity-75">
+                      {new Date(session.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      {session.teacherId && (() => {
+                        const t = teachersById.get(session.teacherId);
+                        return t ? <span className="ml-1">· {t.name.split(' ')[0]}</span> : null;
+                      })()}
+                    </div>
+                    <div className="truncate opacity-75">
+                      {session.studentIds.map(sid => studentsById.get(sid)?.name.split(' ')[0]).filter(Boolean).join(', ')}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     );
   };
 
   const renderWeekView = () => {
-      const startOfWeek = getStartOfWeek(currentDate);
-      const weekDays = Array.from({ length: 7 }, (_, i) => {
-          const d = new Date(startOfWeek);
-          d.setDate(d.getDate() + i);
-          return d;
-      });
+    const startOfWeek = getStartOfWeek(currentDate);
+    const weekDays = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(startOfWeek);
+      d.setDate(d.getDate() + i);
+      return d;
+    });
 
-      return (
-          <div className="grid grid-cols-7 gap-px bg-stone-200 rounded-lg overflow-hidden border border-cream-border h-[600px] animate-in fade-in">
-              {weekDays.map((day, i) => {
-                  const isToday = new Date().toDateString() === day.toDateString();
-                  const dateStr = day.toISOString().split('T')[0];
-                  const daySessions = sessions.filter(s => s.date.startsWith(dateStr))
-                      .sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    return (
+      <div className="grid grid-cols-7 gap-px bg-stone-200 rounded-lg overflow-hidden border border-cream-border h-[600px] animate-in fade-in">
+        {weekDays.map((day, i) => {
+          const isToday = new Date().toDateString() === day.toDateString();
+          const dateStr = localDateKey(day);
+          const daySessions = sessionsByLocalDay.get(dateStr) || [];
 
-                  return (
-                      <div key={i} className="flex flex-col bg-white h-full group" onClick={() => openAddModal(dateStr)}>
-                          <div className={`p-3 text-center border-b border-cream-border ${isToday ? 'bg-coral-50' : ''}`}>
-                              <p className={`text-xs font-semibold uppercase ${isToday ? 'text-coral-600' : 'text-stone-500'}`}>
-                                  {day.toLocaleDateString('en-US', { weekday: 'short' })}
-                              </p>
-                              <p className={`text-lg font-bold mt-1 ${isToday ? 'text-coral-700' : 'text-stone-800'}`}>
-                                  {day.getDate()}
-                              </p>
-                          </div>
-                          <div className="flex-1 p-2 space-y-2 overflow-y-auto hover:bg-cream transition-colors cursor-pointer">
-                              {daySessions.map(session => (
-                                  <div
-                                    key={session.id}
-                                    onClick={(e) => { e.stopPropagation(); openEditModal(session); }}
-                                    className={`p-2 rounded border-l-4 shadow-sm cursor-pointer hover:shadow-md transition-all ${
-                                        session.isTrial
-                                        ? 'bg-amber-50 border-amber-500 text-amber-800'
-                                        : session.type === ClassType.OneOnOne
-                                        ? 'bg-blue-50 border-blue-500 text-blue-800'
-                                        : 'bg-orange-50 border-orange-500 text-orange-800'
-                                    }`}
-                                  >
-                                      <div className="flex justify-between items-start mb-1">
-                                          <span className="text-xs font-bold opacity-75">
-                                              {new Date(session.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                                          </span>
-                                          {session.isTrial && <span className="text-[8px] uppercase font-bold bg-amber-200 text-amber-900 px-1 rounded">Trial</span>}
-                                      </div>
-                                      <div className="font-semibold text-xs mb-1 line-clamp-2">{session.topic}</div>
-                                      <div className="flex -space-x-1 overflow-hidden pt-1">
-                                          {session.studentIds.map((sid, idx) => (
-                                              <div key={idx} className="w-5 h-5 rounded-full bg-white flex items-center justify-center text-[8px] font-bold ring-1 ring-cream-border" title={students.find(s=>s.id===sid)?.name}>
-                                                  {students.find(s => s.id === sid)?.name.charAt(0)}
-                                              </div>
-                                          ))}
-                                      </div>
-                                  </div>
-                              ))}
-                              {daySessions.length === 0 && (
-                                  <div className="h-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                                      <PlusIcon className="w-6 h-6 text-stone-300" />
-                                  </div>
-                              )}
-                          </div>
-                      </div>
-                  );
-              })}
-          </div>
-      );
+          return (
+            <div key={i} className="flex flex-col bg-white h-full group" onClick={() => openAddModal(dateStr)}>
+              <div className={`p-3 text-center border-b border-cream-border ${isToday ? 'bg-coral-50' : ''}`}>
+                <p className={`text-xs font-semibold uppercase ${isToday ? 'text-coral-600' : 'text-stone-500'}`}>
+                  {day.toLocaleDateString('en-US', { weekday: 'short' })}
+                </p>
+                <p className={`text-lg font-bold mt-1 ${isToday ? 'text-coral-700' : 'text-stone-800'}`}>
+                  {day.getDate()}
+                </p>
+              </div>
+              <div className="flex-1 p-2 space-y-2 overflow-y-auto hover:bg-cream transition-colors cursor-pointer">
+                {daySessions.map(session => (
+                  <div
+                    key={session.id}
+                    onClick={(e) => { e.stopPropagation(); openEditModal(session); }}
+                    className={`p-2 rounded border-l-4 shadow-sm cursor-pointer hover:shadow-md transition-all ${
+                      session.isTrial
+                        ? 'bg-amber-50 border-amber-500 text-amber-800'
+                        : session.type === ClassType.OneOnOne
+                        ? 'bg-blue-50 border-blue-500 text-blue-800'
+                        : 'bg-orange-50 border-orange-500 text-orange-800'
+                    }`}
+                  >
+                    <div className="flex justify-between items-start mb-1">
+                      <span className="text-xs font-bold opacity-75">
+                        {new Date(session.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                      {session.isTrial && <span className="text-[8px] uppercase font-bold bg-amber-200 text-amber-900 px-1 rounded">Trial</span>}
+                    </div>
+                    <div className="font-semibold text-xs mb-1 line-clamp-2">{session.topic}</div>
+                    <div className="flex -space-x-1 overflow-hidden pt-1">
+                      {session.studentIds.map((sid, idx) => (
+                        <div key={idx} className="w-5 h-5 rounded-full bg-white flex items-center justify-center text-[8px] font-bold ring-1 ring-cream-border" title={studentsById.get(sid)?.name}>
+                          {studentsById.get(sid)?.name.charAt(0)}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+                {daySessions.length === 0 && (
+                  <div className="h-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                    <PlusIcon className="w-6 h-6 text-stone-300" />
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
   };
 
   const renderYearView = () => {
-      const months = Array.from({ length: 12 }, (_, i) => i);
-      const currentYear = currentDate.getFullYear();
+    const months = Array.from({ length: 12 }, (_, i) => i);
+    const currentYear = currentDate.getFullYear();
 
-      return (
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 animate-in fade-in">
-              {months.map(monthIndex => {
-                  const monthDate = new Date(currentYear, monthIndex, 1);
-                  const { days, firstDay } = getDaysInMonth(monthDate);
-                  const blanks = Array(firstDay).fill(null);
-                  const daySlots = Array.from({ length: days }, (_, i) => i + 1);
-                  
+    return (
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 animate-in fade-in">
+        {months.map(monthIndex => {
+          const monthDate = new Date(currentYear, monthIndex, 1);
+          const { days, firstDay } = getDaysInMonth(monthDate);
+          const blanks = Array(firstDay).fill(null);
+          const daySlots = Array.from({ length: days }, (_, i) => i + 1);
+
+          return (
+            <div
+              key={monthIndex}
+              className="bg-white rounded-2xl border border-cream-border p-4 hover:shadow-md transition-shadow cursor-pointer"
+              onClick={() => {
+                setCurrentDate(new Date(currentYear, monthIndex, 1));
+                setViewMode('month');
+              }}
+            >
+              <h4 className="font-bold text-stone-800 mb-2">{monthDate.toLocaleDateString('en-US', { month: 'long' })}</h4>
+              <div className="grid grid-cols-7 gap-1 text-[10px] text-center">
+                {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => <span key={`${d}-${i}`} className="text-stone-400">{d}</span>)}
+
+                {blanks.map((_, i) => <div key={`b-${i}`} />)}
+
+                {daySlots.map(day => {
+                  const pad = (n: number) => String(n).padStart(2, '0');
+                  const dateStr = `${currentYear}-${pad(monthIndex + 1)}-${pad(day)}`;
+                  const daySessions = sessionsByLocalDay.get(dateStr) || [];
+                  const hasSession = daySessions.length > 0;
+                  const sessionTypes = daySessions.map(s => s.type);
+
+                  let dotColor = 'bg-transparent';
+                  if (hasSession) {
+                    if (sessionTypes.includes(ClassType.Group)) dotColor = 'bg-orange-400';
+                    else if (sessionTypes.includes(ClassType.OneOnOne)) dotColor = 'bg-blue-500';
+                    else dotColor = 'bg-slate-400';
+                  }
+
                   return (
-                      <div 
-                        key={monthIndex} 
-                        className="bg-white rounded-2xl border border-cream-border p-4 hover:shadow-md transition-shadow cursor-pointer"
-                        onClick={() => {
-                            setCurrentDate(new Date(currentYear, monthIndex, 1));
-                            setViewMode('month');
-                        }}
-                      >
-                          <h4 className="font-bold text-stone-800 mb-2">{monthDate.toLocaleDateString('en-US', { month: 'long' })}</h4>
-                          <div className="grid grid-cols-7 gap-1 text-[10px] text-center">
-                              {['S','M','T','W','T','F','S'].map(d => <span key={d} className="text-stone-400">{d}</span>)}
-                              
-                              {blanks.map((_, i) => <div key={`b-${i}`} />)}
-                              
-                              {daySlots.map(day => {
-                                  const dateStr = `${currentYear}-${(monthIndex + 1).toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
-                                  const hasSession = sessions.some(s => s.date.startsWith(dateStr));
-                                  const sessionTypes = sessions.filter(s => s.date.startsWith(dateStr)).map(s => s.type);
-                                  
-                                  let dotColor = 'bg-transparent';
-                                  if (hasSession) {
-                                      if (sessionTypes.includes(ClassType.Group)) dotColor = 'bg-orange-400';
-                                      else if (sessionTypes.includes(ClassType.OneOnOne)) dotColor = 'bg-blue-500';
-                                      else dotColor = 'bg-slate-400';
-                                  }
-
-                                  return (
-                                      <div key={day} className="flex flex-col items-center justify-center h-5 w-5 rounded-full hover:bg-cream-soft">
-                                          <span className={`text-stone-600 ${hasSession ? 'font-bold text-stone-900' : ''}`}>{day}</span>
-                                          <div className={`w-1 h-1 rounded-full mt-[1px] ${dotColor}`}></div>
-                                      </div>
-                                  );
-                              })}
-                          </div>
-                      </div>
-                  )
-              })}
-          </div>
-      );
+                    <div key={day} className="flex flex-col items-center justify-center h-5 w-5 rounded-full hover:bg-cream-soft">
+                      <span className={`text-stone-600 ${hasSession ? 'font-bold text-stone-900' : ''}`}>{day}</span>
+                      <div className={`w-1 h-1 rounded-full mt-[1px] ${dotColor}`}></div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
   };
 
-  const PlusIcon = ({className}: {className?: string}) => (
-      <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-12H4" />
-      </svg>
+  const PlusIcon = ({ className }: { className?: string }) => (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-12H4" />
+    </svg>
   );
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div className="flex items-center gap-4">
-            <h2 className="text-xl font-serif font-semibold tracking-tight text-stone-800 min-w-[200px]">
-                {getHeaderText()}
-            </h2>
-            <div className="flex items-center gap-2">
-                <button 
-                    onClick={handleToday}
-                    className="px-3 py-1.5 text-xs font-medium bg-white border border-cream-border text-stone-600 rounded-lg hover:bg-cream transition-colors shadow-sm"
-                >
-                    Today
-                </button>
-                <div className="flex items-center bg-white rounded-lg border border-cream-border shadow-sm">
-                    <button onClick={handlePrev} className="p-1.5 hover:bg-cream text-stone-600"><ChevronLeft className="w-5 h-5" /></button>
-                    <div className="w-px h-6 bg-stone-200"></div>
-                    <button onClick={handleNext} className="p-1.5 hover:bg-cream text-stone-600"><ChevronRight className="w-5 h-5" /></button>
-                </div>
+          <h2 className="text-xl font-serif font-semibold tracking-tight text-stone-800 min-w-[200px]">
+            {getHeaderText()}
+          </h2>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleToday}
+              className="px-3 py-1.5 text-xs font-medium bg-white border border-cream-border text-stone-600 rounded-lg hover:bg-cream transition-colors shadow-sm"
+            >
+              Today
+            </button>
+            <div className="flex items-center bg-white rounded-lg border border-cream-border shadow-sm">
+              <button onClick={handlePrev} aria-label="Previous" className="p-1.5 hover:bg-cream text-stone-600"><ChevronLeft className="w-5 h-5" /></button>
+              <div className="w-px h-6 bg-stone-200"></div>
+              <button onClick={handleNext} aria-label="Next" className="p-1.5 hover:bg-cream text-stone-600"><ChevronRight className="w-5 h-5" /></button>
             </div>
+          </div>
         </div>
 
         <div className="flex items-center gap-3 w-full sm:w-auto">
-            <div className="flex p-1 bg-stone-200/50 rounded-lg">
-                <button 
-                    onClick={() => setViewMode('year')}
-                    className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${viewMode === 'year' ? 'bg-white text-coral-600 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
-                >
-                    Year
-                </button>
-                <button 
-                    onClick={() => setViewMode('month')}
-                    className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${viewMode === 'month' ? 'bg-white text-coral-600 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
-                >
-                    Month
-                </button>
-                <button 
-                    onClick={() => setViewMode('week')}
-                    className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${viewMode === 'week' ? 'bg-white text-coral-600 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
-                >
-                    Week
-                </button>
-            </div>
-            
-            <button
+          <div className="flex p-1 bg-stone-200/50 rounded-lg">
+            {(['year', 'month', 'week'] as ViewMode[]).map(v => (
+              <button
+                key={v}
+                onClick={() => setViewMode(v)}
+                className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${viewMode === v ? 'bg-white text-coral-600 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
+              >
+                {v.charAt(0).toUpperCase() + v.slice(1)}
+              </button>
+            ))}
+          </div>
+
+          <button
             onClick={() => openAddModal()}
             className="flex-1 sm:flex-none bg-coral-600 hover:bg-coral-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
-            >
+          >
             <CalendarIcon className="w-4 h-4" />
             <span className="hidden sm:inline">Log Session</span>
             <span className="sm:hidden">Log</span>
-            </button>
+          </button>
         </div>
       </div>
 
@@ -584,333 +639,366 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
       {/* Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto animate-in zoom-in-95 duration-200 relative">
-                <div className="flex justify-between items-center p-6 border-b border-cream-border">
-                    <h3 className="text-lg font-serif font-semibold tracking-tight text-stone-800">
-                        {editingSessionId ? 'Edit Session' : 'Log New Session'}
-                    </h3>
-                    <button onClick={() => setIsModalOpen(false)} className="text-stone-400 hover:text-stone-600">
-                        <X className="w-5 h-5" />
-                    </button>
-                </div>
-                
-                <form onSubmit={handleSubmit} className="p-6 space-y-4">
-                    <div className="grid grid-cols-1 gap-4">
-                        <div>
-                            <label className="block text-sm font-medium text-stone-700 mb-2">Session Type</label>
-                            <select
-                                value={sessionType}
-                                onChange={e => setSessionType(e.target.value as ClassType)}
-                                className="w-full p-2 border rounded-md"
-                            >
-                                <option value={ClassType.OneOnOne}>One-on-One</option>
-                                <option value={ClassType.Group}>One-on-Two (Group)</option>
-                            </select>
-                        </div>
-
-                        <div>
-                            <label className="block text-sm font-medium text-stone-700 mb-1">Teacher</label>
-                            <select
-                                value={teacherId}
-                                onChange={e => setTeacherId(e.target.value)}
-                                className="w-full p-2 border rounded-md"
-                            >
-                                <option value="">— Unassigned —</option>
-                                {teachers.filter(t => t.status === 'Active').map(t => (
-                                    <option key={t.id} value={t.id}>{t.name}</option>
-                                ))}
-                            </select>
-                            {teachers.length === 0 && (
-                                <p className="text-[11px] text-stone-400 mt-1">No teachers yet. Add some on the Teachers page.</p>
-                            )}
-                        </div>
-
-                        <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${isTrial ? 'bg-amber-50 border-amber-300' : 'bg-cream border-cream-border hover:bg-cream-soft'}`}>
-                            <input
-                                type="checkbox"
-                                checked={isTrial}
-                                onChange={e => setIsTrial(e.target.checked)}
-                                className="mt-0.5 w-4 h-4 accent-amber-600"
-                            />
-                            <div className="flex-1">
-                                <div className="text-sm font-medium text-stone-800">Trial lesson (free)</div>
-                                <div className="text-xs text-stone-500 mt-0.5">Doesn't affect student balance or revenue. Use for first-time trial classes.</div>
-                            </div>
-                        </label>
-                        
-                        {/* Student Dropdown Selector */}
-                        <div className="relative">
-                            <label className="block text-sm font-medium text-stone-700 mb-2">Select Students</label>
-                            
-                            {/* Selected Students Chips */}
-                            <div className="flex flex-wrap gap-2 mb-2">
-                                {selectedStudents.map(id => {
-                                    const s = students.find(student => student.id === id);
-                                    if(!s) return null;
-                                    return (
-                                        <div key={id} className="bg-coral-50 border border-coral-200 text-coral-700 px-3 py-1 rounded-full text-sm flex items-center gap-2">
-                                            {s.name}
-                                            <button type="button" onClick={() => handleStudentToggle(id)}><X className="w-3 h-3" /></button>
-                                        </div>
-                                    )
-                                })}
-                            </div>
-
-                            <button 
-                                type="button"
-                                onClick={() => setIsStudentDropdownOpen(!isStudentDropdownOpen)}
-                                className="w-full p-2 border rounded-md flex justify-between items-center bg-white hover:bg-cream text-left"
-                            >
-                                <span className="text-stone-500 text-sm">
-                                    {selectedStudents.length === 0 ? "Search and select students..." : `${selectedStudents.length} selected`}
-                                </span>
-                                {isStudentDropdownOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                            </button>
-
-                            {isStudentDropdownOpen && (
-                                <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-cream-border rounded-lg shadow-lg z-20 max-h-60 overflow-hidden flex flex-col">
-                                    <div className="p-2 border-b border-cream-border">
-                                        <div className="relative">
-                                            <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-stone-400" />
-                                            <input 
-                                                autoFocus
-                                                type="text" 
-                                                placeholder="Search name..."
-                                                className="w-full pl-8 pr-2 py-1.5 text-sm bg-cream rounded-md focus:outline-none"
-                                                value={studentSearch}
-                                                onChange={e => setStudentSearch(e.target.value)}
-                                            />
-                                        </div>
-                                    </div>
-                                    <div className="overflow-y-auto flex-1 p-1">
-                                        {filteredStudents.length === 0 && <div className="p-2 text-center text-xs text-stone-400">No active students found.</div>}
-                                        {filteredStudents.map(s => (
-                                            <button
-                                                key={s.id}
-                                                type="button"
-                                                onClick={() => handleStudentToggle(s.id)}
-                                                disabled={!selectedStudents.includes(s.id) && selectedStudents.length >= 2}
-                                                className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between ${
-                                                    selectedStudents.includes(s.id) ? 'bg-coral-50 text-coral-700' : 'hover:bg-cream text-stone-700 disabled:opacity-50'
-                                                }`}
-                                            >
-                                                <span>{s.name}</span>
-                                                {selectedStudents.includes(s.id) && <CheckCircle className="w-4 h-4" />}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-
-                    {/* Attendance Status Per Student */}
-                    {selectedStudents.length > 0 && (
-                        <div className="bg-cream p-3 rounded-lg border border-cream-border space-y-2">
-                            <label className="block text-xs font-semibold text-stone-500 uppercase">Attendance & Progress</label>
-                            {selectedStudents.map(id => {
-                                const s = students.find(student => student.id === id);
-                                if (!s) return null;
-                                const hasProgress = !!tempProgress[id];
-                                return (
-                                    <div key={id} className="flex justify-between items-center gap-2">
-                                        <div className="flex items-center gap-2 overflow-hidden flex-1">
-                                             <span className="text-sm font-medium text-stone-700 truncate">{s.name}</span>
-                                             {hasProgress && <span className="bg-coral-100 text-violet-700 text-[10px] px-1.5 py-0.5 rounded-full flex items-center gap-1"><TrendingUp className="w-3 h-3"/> Updated</span>}
-                                        </div>
-                                        <div className="flex items-center gap-2">
-                                            <select 
-                                                value={studentStatuses[id] || AttendanceStatus.Present}
-                                                onChange={(e) => handleStatusChange(id, e.target.value as AttendanceStatus)}
-                                                className={`text-sm p-1.5 rounded border ${
-                                                    studentStatuses[id] === AttendanceStatus.Present ? 'bg-emerald-50 border-emerald-200 text-emerald-700' :
-                                                    studentStatuses[id] === AttendanceStatus.Late ? 'bg-amber-50 border-amber-200 text-amber-700' :
-                                                    'bg-red-50 border-red-200 text-red-700'
-                                                }`}
-                                            >
-                                                {Object.values(AttendanceStatus).map(status => (
-                                                    <option key={status} value={status}>{status}</option>
-                                                ))}
-                                            </select>
-                                            <button 
-                                                type="button" 
-                                                onClick={() => openProgressModal(id)}
-                                                className={`p-1.5 rounded transition-colors border ${hasProgress ? 'bg-coral-50 text-coral-600 border-violet-200' : 'text-stone-400 border-transparent hover:bg-cream-soft'}`}
-                                                title="Edit Progress & Notes"
-                                            >
-                                                <MoreVertical className="w-4 h-4" />
-                                            </button>
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    )}
-
-                    <div className="grid grid-cols-2 gap-4">
-                        <input
-                            type="date"
-                            value={date}
-                            onChange={e => setDate(e.target.value)}
-                            className="p-2 border rounded-md"
-                            required
-                        />
-                        <input
-                            type="time"
-                            value={time}
-                            onChange={e => setTime(e.target.value)}
-                            className="p-2 border rounded-md"
-                            required
-                        />
-                    </div>
-
-                    <div className="flex gap-4">
-                        <input
-                            placeholder="Topic"
-                            value={topic}
-                            onChange={e => setTopic(e.target.value)}
-                            className="flex-1 p-2 border rounded-md"
-                            required
-                        />
-                    </div>
-
-                    <div className="relative">
-                        <textarea
-                            placeholder="General session notes..."
-                            value={notes}
-                            onChange={e => setNotes(e.target.value)}
-                            className="w-full p-2 border rounded-md"
-                            rows={3}
-                        />
-                        <button
-                            type="button"
-                            disabled={!topic || selectedStudents.length === 0 || isGeneratingPlan}
-                            onClick={handleGeneratePlan}
-                            className="absolute bottom-2 right-2 text-xs flex items-center gap-1 bg-coral-100 text-violet-700 px-2 py-1 rounded-md hover:bg-violet-200 disabled:opacity-50"
-                        >
-                            <Sparkles className="w-3 h-3" />
-                            {isGeneratingPlan ? 'Generating...' : 'AI Plan'}
-                        </button>
-                    </div>
-
-                    {generatedPlan && (
-                        <div className="bg-coral-50 p-3 rounded-md text-xs text-stone-700 max-h-40 overflow-y-auto whitespace-pre-wrap border border-violet-100">
-                            <h4 className="font-semibold text-violet-800 mb-1">Generated Plan Preview:</h4>
-                            {generatedPlan}
-                        </div>
-                    )}
-
-                    <div className="flex justify-between pt-2">
-                        {editingSessionId ? (
-                            <button
-                                type="button"
-                                onClick={handleDelete}
-                                className="flex items-center gap-2 text-red-600 hover:bg-red-50 px-3 py-2 rounded-md transition-colors"
-                            >
-                                <Trash2 className="w-4 h-4" />
-                                Delete
-                            </button>
-                        ) : <div></div>}
-                        
-                        <div className="flex gap-2">
-                            <button 
-                                type="button" 
-                                onClick={() => setIsModalOpen(false)}
-                                className="px-4 py-2 text-stone-600 hover:bg-cream rounded-md"
-                            >
-                                Cancel
-                            </button>
-                            <button 
-                                type="submit"
-                                className="px-4 py-2 bg-coral-600 text-white rounded-md hover:bg-coral-700"
-                            >
-                                {editingSessionId ? 'Update Session' : 'Save Session'}
-                            </button>
-                        </div>
-                    </div>
-                </form>
-
-                {/* Nested Modal for Progress Editing */}
-                {progressModalOpen && currentProgressStudentId && (
-                     <div className="absolute inset-0 z-[60] bg-white rounded-xl flex flex-col animate-in slide-in-from-bottom-2">
-                        <div className="flex justify-between items-center p-4 border-b border-cream-border bg-coral-50 rounded-t-xl">
-                            <h3 className="font-bold text-violet-900 flex items-center gap-2">
-                                <TrendingUp className="w-4 h-4" /> 
-                                Progress: {students.find(s => s.id === currentProgressStudentId)?.name}
-                            </h3>
-                            <button onClick={() => setProgressModalOpen(false)} className="text-violet-400 hover:text-violet-700">
-                                <X className="w-5 h-5" />
-                            </button>
-                        </div>
-                        <div className="flex-1 p-6 overflow-y-auto">
-                            <div className="grid grid-cols-2 gap-4 mb-6">
-                                {(() => {
-                                    const s = students.find(st => st.id === currentProgressStudentId);
-                                    const latest = s?.progressHistory && s.progressHistory.length > 0
-                                        ? s.progressHistory[s.progressHistory.length - 1]
-                                        : null;
-
-                                    return [
-                                        { label: 'Reading', key: 'reading', color: 'bg-blue-100 text-blue-700' },
-                                        { label: 'Writing', key: 'writing', color: 'bg-emerald-100 text-emerald-700' },
-                                        { label: 'Listening', key: 'listening', color: 'bg-amber-100 text-amber-700' },
-                                        { label: 'Speaking', key: 'speaking', color: 'bg-coral-100 text-violet-700' },
-                                    ].map((field) => {
-                                        const previousScore = latest ? latest[field.key as keyof SkillProgress] : null;
-                                        return (
-                                            <div key={field.key}>
-                                                <div className="flex justify-between items-center mb-1.5">
-                                                    <label className={`block text-[10px] uppercase font-bold px-2 py-0.5 rounded-full w-fit ${field.color}`}>
-                                                        {field.label}
-                                                    </label>
-                                                    {previousScore !== null && (
-                                                        <span className="text-[10px] text-stone-400 font-medium bg-cream-soft px-1.5 py-0.5 rounded">
-                                                            Prev: {previousScore}
-                                                        </span>
-                                                    )}
-                                                </div>
-                                                <input 
-                                                    type="number" 
-                                                    min="0" max="100"
-                                                    value={tempProgress[currentProgressStudentId]?.[field.key as keyof SkillProgress] || 0}
-                                                    onChange={e => updateTempProgress(field.key as keyof SkillProgress, parseInt(e.target.value) || 0)}
-                                                    className="w-full p-2 rounded-md border text-sm text-center font-semibold focus:ring-2 focus:ring-coral-500 outline-none"
-                                                />
-                                            </div>
-                                        );
-                                    });
-                                })()}
-                            </div>
-                            <div>
-                                <label className="block text-xs font-medium text-stone-500 mb-1">Student-Specific Note</label>
-                                <textarea 
-                                    value={tempProgress[currentProgressStudentId]?.notes || ''}
-                                    onChange={e => updateTempProgress('notes', e.target.value)}
-                                    placeholder="Specific achievements or struggles today..."
-                                    className="w-full p-2 rounded-md border text-sm focus:ring-2 focus:ring-coral-500 outline-none"
-                                    rows={3}
-                                />
-                            </div>
-                        </div>
-                        <div className="p-4 border-t border-cream-border flex justify-end">
-                             <button 
-                                type="button" 
-                                onClick={() => setProgressModalOpen(false)}
-                                className="px-4 py-2 bg-coral-600 text-white rounded-md hover:bg-violet-700 text-sm font-medium"
-                            >
-                                Done
-                            </button>
-                        </div>
-                     </div>
-                )}
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto animate-in zoom-in-95 duration-200 relative">
+            <div className="flex justify-between items-center p-6 border-b border-cream-border">
+              <h3 className="text-lg font-serif font-semibold tracking-tight text-stone-800">
+                {editingSessionId ? 'Edit Session' : 'Log New Session'}
+              </h3>
+              <button onClick={() => setIsModalOpen(false)} aria-label="Close" className="text-stone-400 hover:text-stone-600">
+                <X className="w-5 h-5" />
+              </button>
             </div>
+
+            <form onSubmit={handleSubmit} className="p-6 space-y-4">
+              <div className="grid grid-cols-1 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-stone-700 mb-2">Session Type</label>
+                  <select
+                    aria-label="Session type"
+                    value={sessionType}
+                    onChange={e => setSessionType(e.target.value as ClassType)}
+                    className="w-full p-2 border rounded-md"
+                  >
+                    <option value={ClassType.OneOnOne}>One-on-One</option>
+                    <option value={ClassType.Group}>One-on-Two (Group)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-stone-700 mb-1">Teacher</label>
+                  <select
+                    aria-label="Teacher"
+                    value={teacherId}
+                    onChange={e => setTeacherId(e.target.value)}
+                    className="w-full p-2 border rounded-md"
+                  >
+                    <option value="">— Unassigned —</option>
+                    {teachers.filter(t => t.status === 'Active').map(t => (
+                      <option key={t.id} value={t.id}>{t.name}</option>
+                    ))}
+                  </select>
+                  {teachers.length === 0 && (
+                    <p className="text-[11px] text-stone-400 mt-1">No teachers yet. Add some on the Teachers page.</p>
+                  )}
+                </div>
+
+                <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${isTrial ? 'bg-amber-50 border-amber-300' : 'bg-cream border-cream-border hover:bg-cream-soft'}`}>
+                  <input
+                    type="checkbox"
+                    checked={isTrial}
+                    onChange={e => setIsTrial(e.target.checked)}
+                    className="mt-0.5 w-4 h-4 accent-amber-600"
+                  />
+                  <div className="flex-1">
+                    <div className="text-sm font-medium text-stone-800">Trial lesson (free for everyone)</div>
+                    <div className="text-xs text-stone-500 mt-0.5">For mixed groups, use the per-student trial toggle below instead.</div>
+                  </div>
+                </label>
+
+                {/* Student Dropdown Selector */}
+                <div className="relative">
+                  <label className="block text-sm font-medium text-stone-700 mb-2">Select Students</label>
+
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    {selectedStudents.map(id => {
+                      const s = studentsById.get(id);
+                      if (!s) return null;
+                      return (
+                        <div key={id} className="bg-coral-50 border border-coral-200 text-coral-700 px-3 py-1 rounded-full text-sm flex items-center gap-2">
+                          {s.name}
+                          <button type="button" aria-label={`Remove ${s.name}`} onClick={() => handleStudentToggle(id)}><X className="w-3 h-3" /></button>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setIsStudentDropdownOpen(!isStudentDropdownOpen)}
+                    className="w-full p-2 border rounded-md flex justify-between items-center bg-white hover:bg-cream text-left"
+                  >
+                    <span className="text-stone-500 text-sm">
+                      {selectedStudents.length === 0 ? 'Search and select students…' : `${selectedStudents.length} selected`}
+                    </span>
+                    {isStudentDropdownOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  </button>
+
+                  {isStudentDropdownOpen && (
+                    <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-cream-border rounded-lg shadow-lg z-20 max-h-60 overflow-hidden flex flex-col">
+                      <div className="p-2 border-b border-cream-border">
+                        <div className="relative">
+                          <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-stone-400" />
+                          <input
+                            autoFocus
+                            type="text"
+                            aria-label="Search students"
+                            placeholder="Search name…"
+                            className="w-full pl-8 pr-2 py-1.5 text-sm bg-cream rounded-md focus:outline-none"
+                            value={studentSearch}
+                            onChange={e => setStudentSearch(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                      <div className="overflow-y-auto flex-1 p-1">
+                        {filteredStudents.length === 0 && <div className="p-2 text-center text-xs text-stone-400">No active students found.</div>}
+                        {filteredStudents.map(s => (
+                          <button
+                            key={s.id}
+                            type="button"
+                            onClick={() => handleStudentToggle(s.id)}
+                            disabled={!selectedStudents.includes(s.id) && selectedStudents.length >= 2}
+                            className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between ${
+                              selectedStudents.includes(s.id) ? 'bg-coral-50 text-coral-700' : 'hover:bg-cream text-stone-700 disabled:opacity-50'
+                            }`}
+                          >
+                            <span>{s.name}</span>
+                            {selectedStudents.includes(s.id) && <CheckCircle className="w-4 h-4" />}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Attendance Status Per Student */}
+              {selectedStudents.length > 0 && (
+                <div className="bg-cream p-3 rounded-lg border border-cream-border space-y-2">
+                  <label className="block text-xs font-semibold text-stone-500 uppercase">Attendance & Progress</label>
+                  {selectedStudents.map(id => {
+                    const s = studentsById.get(id);
+                    if (!s) return null;
+                    const hasProgress = !!tempProgress[id];
+                    const studentTrial = !!studentTrials[id];
+                    return (
+                      <div key={id} className="space-y-1.5">
+                        <div className="flex justify-between items-center gap-2">
+                          <div className="flex items-center gap-2 overflow-hidden flex-1">
+                            <span className="text-sm font-medium text-stone-700 truncate">{s.name}</span>
+                            {hasProgress && <span className="bg-coral-100 text-violet-700 text-[10px] px-1.5 py-0.5 rounded-full flex items-center gap-1"><TrendingUp className="w-3 h-3" /> Updated</span>}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <select
+                              aria-label={`Attendance status for ${s.name}`}
+                              value={studentStatuses[id] || AttendanceStatus.Present}
+                              onChange={(e) => handleStatusChange(id, e.target.value as AttendanceStatus)}
+                              className={`text-sm p-1.5 rounded border ${
+                                studentStatuses[id] === AttendanceStatus.Present ? 'bg-emerald-50 border-emerald-200 text-emerald-700' :
+                                studentStatuses[id] === AttendanceStatus.Late ? 'bg-amber-50 border-amber-200 text-amber-700' :
+                                'bg-red-50 border-red-200 text-red-700'
+                              }`}
+                            >
+                              {Object.values(AttendanceStatus).map(status => (
+                                <option key={status} value={status}>{status}</option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              onClick={() => openProgressModal(id)}
+                              aria-label={`Edit progress for ${s.name}`}
+                              className={`p-1.5 rounded transition-colors border ${hasProgress ? 'bg-coral-50 text-coral-600 border-violet-200' : 'text-stone-400 border-transparent hover:bg-cream-soft'}`}
+                              title="Edit Progress & Notes"
+                            >
+                              <MoreVertical className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                        {!isTrial && selectedStudents.length > 1 && (
+                          <label className="flex items-center gap-2 text-[11px] text-stone-500 pl-1" title="Marks this session as a trial for THIS student only.">
+                            <input
+                              type="checkbox"
+                              checked={studentTrial}
+                              onChange={() => toggleStudentTrial(id)}
+                              className="w-3 h-3"
+                            />
+                            Trial for {s.name.split(' ')[0]} only
+                          </label>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-stone-500 mb-1">Date</label>
+                  <input
+                    type="date"
+                    value={date}
+                    onChange={e => setDate(e.target.value)}
+                    className="p-2 border rounded-md w-full"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-stone-500 mb-1">Time</label>
+                  <input
+                    type="time"
+                    value={time}
+                    onChange={e => setTime(e.target.value)}
+                    className="p-2 border rounded-md w-full"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-4">
+                <input
+                  placeholder="Topic"
+                  aria-label="Topic"
+                  value={topic}
+                  onChange={e => setTopic(e.target.value)}
+                  className="flex-1 p-2 border rounded-md"
+                  required
+                />
+              </div>
+
+              <div className="relative">
+                <textarea
+                  placeholder="General session notes…"
+                  aria-label="Session notes"
+                  value={notes}
+                  onChange={e => setNotes(e.target.value)}
+                  className="w-full p-2 border rounded-md"
+                  rows={3}
+                />
+                <button
+                  type="button"
+                  disabled={!topic || selectedStudents.length === 0 || isGeneratingPlan}
+                  onClick={handleGeneratePlan}
+                  className="absolute bottom-2 right-2 text-xs flex items-center gap-1 bg-coral-100 text-violet-700 px-2 py-1 rounded-md hover:bg-violet-200 disabled:opacity-50"
+                >
+                  <Sparkles className="w-3 h-3" />
+                  {isGeneratingPlan ? 'Generating…' : 'AI Plan'}
+                </button>
+              </div>
+
+              {generatedPlan && (
+                <div className="bg-coral-50 p-3 rounded-md text-xs text-stone-700 max-h-40 overflow-y-auto whitespace-pre-wrap border border-violet-100">
+                  <h4 className="font-semibold text-violet-800 mb-1">Generated Plan Preview:</h4>
+                  {generatedPlan}
+                </div>
+              )}
+
+              {saveError && <p className="text-xs text-red-600">{saveError}</p>}
+
+              <div className="flex justify-between pt-2">
+                {editingSessionId ? (
+                  <button
+                    type="button"
+                    onClick={handleDelete}
+                    disabled={isSaving}
+                    className="flex items-center gap-2 text-red-600 hover:bg-red-50 px-3 py-2 rounded-md transition-colors disabled:opacity-50"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Delete
+                  </button>
+                ) : <div></div>}
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsModalOpen(false)}
+                    disabled={isSaving}
+                    className="px-4 py-2 text-stone-600 hover:bg-cream rounded-md disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSaving}
+                    className="px-4 py-2 bg-coral-600 text-white rounded-md hover:bg-coral-700 disabled:opacity-50"
+                  >
+                    {isSaving ? 'Saving…' : (editingSessionId ? 'Update Session' : 'Save Session')}
+                  </button>
+                </div>
+              </div>
+            </form>
+
+            {/* Nested Modal for Progress Editing */}
+            {progressModalOpen && currentProgressStudentId && (
+              <div className="absolute inset-0 z-[60] bg-white rounded-xl flex flex-col animate-in slide-in-from-bottom-2">
+                <div className="flex justify-between items-center p-4 border-b border-cream-border bg-coral-50 rounded-t-xl">
+                  <h3 className="font-bold text-violet-900 flex items-center gap-2">
+                    <TrendingUp className="w-4 h-4" />
+                    Progress: {studentsById.get(currentProgressStudentId)?.name}
+                  </h3>
+                  <button onClick={() => setProgressModalOpen(false)} aria-label="Close progress editor" className="text-violet-400 hover:text-violet-700">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+                <div className="flex-1 p-6 overflow-y-auto">
+                  <div className="grid grid-cols-2 gap-4 mb-6">
+                    {(() => {
+                      const s = studentsById.get(currentProgressStudentId);
+                      const latest = s?.progressHistory && s.progressHistory.length > 0
+                        ? s.progressHistory[s.progressHistory.length - 1]
+                        : null;
+
+                      return ([
+                        { label: 'Reading', key: 'reading' as const, color: 'bg-blue-100 text-blue-700' },
+                        { label: 'Writing', key: 'writing' as const, color: 'bg-emerald-100 text-emerald-700' },
+                        { label: 'Listening', key: 'listening' as const, color: 'bg-amber-100 text-amber-700' },
+                        { label: 'Speaking', key: 'speaking' as const, color: 'bg-coral-100 text-violet-700' }
+                      ]).map(field => {
+                        const previousScore = latest ? latest[field.key] : null;
+                        return (
+                          <div key={field.key}>
+                            <div className="flex justify-between items-center mb-1.5">
+                              <label className={`block text-[10px] uppercase font-bold px-2 py-0.5 rounded-full w-fit ${field.color}`}>
+                                {field.label}
+                              </label>
+                              {previousScore !== null && (
+                                <span className="text-[10px] text-stone-400 font-medium bg-cream-soft px-1.5 py-0.5 rounded">
+                                  Prev: {previousScore}
+                                </span>
+                              )}
+                            </div>
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              aria-label={`${field.label} score`}
+                              value={(tempProgress[currentProgressStudentId]?.[field.key] as number | undefined) ?? 0}
+                              onChange={e => updateTempProgress(field.key, parseInt(e.target.value) || 0)}
+                              className="w-full p-2 rounded-md border text-sm text-center font-semibold focus:ring-2 focus:ring-coral-500 outline-none"
+                            />
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-stone-500 mb-1">Student-Specific Note</label>
+                    <textarea
+                      value={tempProgress[currentProgressStudentId]?.notes || ''}
+                      onChange={e => updateTempProgress('notes', e.target.value)}
+                      placeholder="Specific achievements or struggles today…"
+                      className="w-full p-2 rounded-md border text-sm focus:ring-2 focus:ring-coral-500 outline-none"
+                      rows={3}
+                    />
+                  </div>
+                </div>
+                <div className="p-4 border-t border-cream-border flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setProgressModalOpen(false)}
+                    className="px-4 py-2 bg-coral-600 text-white rounded-md hover:bg-violet-700 text-sm font-medium"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
       {sessionToDelete && (() => {
         const s = sessions.find(ses => ses.id === sessionToDelete);
         if (!s) return null;
-        const names = s.studentIds.map(id => students.find(st => st.id === id)?.name).filter(Boolean).join(', ');
+        const names = s.studentIds.map(id => studentsById.get(id)?.name).filter(Boolean).join(', ');
         return (
           <div className="fixed inset-0 bg-stone-900/40 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-in zoom-in-95 duration-200">
@@ -926,20 +1014,23 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
                   </p>
                 </div>
               </div>
+              {saveError && <p className="text-xs text-red-600 mt-3">{saveError}</p>}
               <div className="flex justify-end gap-2 mt-6">
                 <button
                   type="button"
                   onClick={() => setSessionToDelete(null)}
-                  className="px-4 py-2 text-stone-600 hover:bg-cream rounded-lg text-sm font-medium"
+                  disabled={isSaving}
+                  className="px-4 py-2 text-stone-600 hover:bg-cream rounded-lg text-sm font-medium disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
                   onClick={confirmDeleteSession}
-                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium"
+                  disabled={isSaving}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium disabled:opacity-50"
                 >
-                  Delete session
+                  {isSaving ? 'Deleting…' : 'Delete session'}
                 </button>
               </div>
             </div>
