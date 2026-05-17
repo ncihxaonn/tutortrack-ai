@@ -27,13 +27,16 @@ required to roll those changes safely to production.
 
 ## Before deploying the new code
 
-1. **Set the missing environment variable on Vercel** (Project Settings → Environment Variables):
+1. **Set the missing environment variables on Vercel** (Project Settings → Environment Variables):
    - `GEMINI_API_KEY` — required for the `/api/ai` proxy. Use the same key the
      old front-end was using.
+   - `VITE_AUTH_EMAIL` — the email address that the password-only login flow
+     signs in with under the hood. Set this to the email of the Supabase Auth
+     user you create. When set, the login screen shows only a password field;
+     when unset, both email and password are shown.
    - Existing `SUPABASE_URL` and `SUPABASE_ANON_KEY` continue to work; the
      `VITE_*`-prefixed names are also accepted.
-   - Optional: `VITE_SITE_PASSWORD` and `VITE_ADMIN_PASSWORD` if you want the
-     existing password gates to keep working in dev.
+   - Optional: `VITE_ADMIN_PASSWORD` for the admin-page lock.
 
 2. **Create your first Supabase Auth user** (Supabase Dashboard → Authentication
    → Users → "Add user"). This is the email/password you'll log in with.

@@ -13,6 +13,10 @@ interface ImportMetaEnv {
   readonly VITE_SITE_PASSWORD?: string;
   readonly VITE_ADMIN_PASSWORD?: string;
   readonly VITE_GEMINI_PROXY_URL?: string;
+  // Optional: pre-baked email to use behind the scenes so the login screen
+  // can show only a password field. When set, the LoginPage hides the email
+  // input and signs in with this address + the typed password.
+  readonly VITE_AUTH_EMAIL?: string;
   readonly DEV?: boolean;
   readonly PROD?: boolean;
 }
@@ -38,6 +42,7 @@ export const ENV = {
   SUPABASE_ANON_KEY: required('VITE_SUPABASE_ANON_KEY', 'VITE_SUPABASE_ANON_KEY', 'SUPABASE_ANON_KEY'),
   SITE_PASSWORD: pickFirst('VITE_SITE_PASSWORD'),
   ADMIN_PASSWORD: pickFirst('VITE_ADMIN_PASSWORD'),
+  AUTH_EMAIL: pickFirst('VITE_AUTH_EMAIL'),
   // Proxy URL for the Gemini-backed AI features. Defaults to the bundled
   // serverless function path on the same origin in production.
   GEMINI_PROXY_URL: pickFirst('VITE_GEMINI_PROXY_URL') ?? '/api/ai',

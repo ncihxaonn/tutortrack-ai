@@ -1,10 +1,15 @@
 import React, { useState } from 'react';
 import { BookOpen, Lock, Mail } from 'lucide-react';
 import { useAuth } from '../lib/authContext';
+import { ENV } from '../lib/env';
 
 const LoginPage: React.FC = () => {
   const { signIn } = useAuth();
-  const [email, setEmail] = useState('');
+
+  // If VITE_AUTH_EMAIL is set, the login form hides the email field — you
+  // type only the password and we sign in with the baked-in address.
+  const fixedEmail = ENV.AUTH_EMAIL;
+  const [email, setEmail] = useState(fixedEmail ?? '');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -14,7 +19,7 @@ const LoginPage: React.FC = () => {
     setError(null);
     setSubmitting(true);
     try {
-      await signIn(email.trim(), password);
+      await signIn((fixedEmail ?? email).trim(), password);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setError(msg);
@@ -31,24 +36,28 @@ const LoginPage: React.FC = () => {
             <BookOpen className="w-7 h-7 text-white" />
           </div>
           <h1 className="font-serif text-2xl font-semibold text-stone-900 tracking-tight">TutorTrack</h1>
-          <p className="text-sm text-stone-500 mt-1">Sign in to continue</p>
+          <p className="text-sm text-stone-500 mt-1">
+            {fixedEmail ? 'Enter your password to continue' : 'Sign in to continue'}
+          </p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="relative">
-            <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400" />
-            <input
-              type="email"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              required
-              autoFocus
-              autoComplete="email"
-              placeholder="you@example.com"
-              aria-label="Email"
-              className="w-full pl-10 pr-4 py-3 rounded-xl border border-cream-border text-sm focus:outline-none focus:ring-2 focus:ring-coral-200 focus:border-coral-400"
-            />
-          </div>
+          {!fixedEmail && (
+            <div className="relative">
+              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400" />
+              <input
+                type="email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                required
+                autoFocus
+                autoComplete="email"
+                placeholder="you@example.com"
+                aria-label="Email"
+                className="w-full pl-10 pr-4 py-3 rounded-xl border border-cream-border text-sm focus:outline-none focus:ring-2 focus:ring-coral-200 focus:border-coral-400"
+              />
+            </div>
+          )}
           <div className="relative">
             <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400" />
             <input
@@ -56,6 +65,7 @@ const LoginPage: React.FC = () => {
               value={password}
               onChange={e => setPassword(e.target.value)}
               required
+              autoFocus={!!fixedEmail}
               autoComplete="current-password"
               placeholder="Password"
               aria-label="Password"
@@ -70,12 +80,9 @@ const LoginPage: React.FC = () => {
             disabled={submitting}
             className="w-full bg-coral-600 hover:bg-coral-700 disabled:opacity-50 text-white font-medium py-3 rounded-xl transition-colors text-sm"
           >
-            {submitting ? 'Signing in…' : 'Sign In'}
+            {submitting ? 'Signing in…' : (fixedEmail ? 'Unlock' : 'Sign In')}
           </button>
         </form>
-        <p className="text-[11px] text-stone-400 text-center mt-6">
-          Account access is provisioned by the site owner.
-        </p>
       </div>
     </div>
   );
