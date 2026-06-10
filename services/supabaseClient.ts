@@ -87,6 +87,11 @@ const toStudent = (r: StudentRow): Student => ({
   progressHistory: r.progress_history || []
 });
 
+// NOTE: `balance` is deliberately omitted. The atomic payment/session RPCs are
+// the single source of truth for balance; on INSERT the column defaults to 0,
+// and on a conflicting upsert (profile edit) the existing balance is preserved.
+// Writing it from here let stale client state silently clobber RPC-applied
+// charges and payments.
 const fromStudent = (s: Student) => ({
   id: s.id,
   name: s.name,
@@ -94,7 +99,6 @@ const fromStudent = (s: Student) => ({
   email: s.email ?? null,
   parent_name: s.parentName ?? null,
   notes: s.notes,
-  balance: s.balance,
   joined_date: s.joinedDate,
   status: s.status,
   packages: s.packages,
@@ -193,32 +197,16 @@ export async function fetchAll() {
   };
 }
 
+// Profile/metadata writes only — these never touch balance-bearing columns.
+// All balance changes go exclusively through the atomic RPCs below.
 export const upsertStudent = (s: Student) =>
   supabase.from('students').upsert(fromStudent(s)).then(r => { if (r.error) throw r.error; });
 
 export const deleteStudent = (id: string) =>
   supabase.from('students').delete().eq('id', id).then(r => { if (r.error) throw r.error; });
 
-export const upsertSession = (s: Session) =>
-  supabase.from('sessions').upsert(fromSession(s)).then(r => { if (r.error) throw r.error; });
-
-export const deleteSession = (id: string) =>
-  supabase.from('sessions').delete().eq('id', id).then(r => { if (r.error) throw r.error; });
-
-export const insertPayment = (p: Payment) =>
-  supabase.from('payments').insert(fromPayment(p)).then(r => { if (r.error) throw r.error; });
-
-export const updatePayment = (p: Payment) =>
-  supabase.from('payments').update(fromPayment(p)).eq('id', p.id).then(r => { if (r.error) throw r.error; });
-
-export const deletePayment = (id: string) =>
-  supabase.from('payments').delete().eq('id', id).then(r => { if (r.error) throw r.error; });
-
 export const upsertTeacher = (t: Teacher) =>
   supabase.from('teachers').upsert(fromTeacher(t)).then(r => { if (r.error) throw r.error; });
-
-export const deleteTeacher = (id: string) =>
-  supabase.from('teachers').delete().eq('id', id).then(r => { if (r.error) throw r.error; });
 
 // ── Atomic RPC wrappers ─────────────────────────────────────────────────────
 // These call Postgres functions defined in supabase/migrations/0001_rpc.sql.
@@ -272,10 +260,19 @@ export const rpcRecordPayment = async (payment: Payment): Promise<RpcPaymentResu
   return parsePaymentResult(data);
 };
 
-export const rpcUpdatePayment = async (payment: Payment): Promise<RpcPaymentResult> => {
+// update_payment can move a payment between students, so it returns every
+// affected student (old + new) — not just one — to keep both balances fresh.
+export type RpcPaymentUpdateResult = {
+  payment: Payment;
+  students: Student[];
+};
+
+export const rpcUpdatePayment = async (payment: Payment): Promise<RpcPaymentUpdateResult> => {
   const { data, error } = await supabase.rpc('update_payment', { p_payment: fromPayment(payment) });
   if (error) throw error;
-  return parsePaymentResult(data);
+  const raw = data as { payment?: PaymentRow; students?: StudentRow[] } | null;
+  if (!raw || !raw.payment) throw new Error('RPC returned incomplete payment');
+  return { payment: toPayment(raw.payment), students: (raw.students ?? []).map(toStudent) };
 };
 
 export const rpcDeletePayment = async (paymentId: string): Promise<{ student: Student | null }> => {

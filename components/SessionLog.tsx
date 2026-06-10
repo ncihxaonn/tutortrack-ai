@@ -9,7 +9,7 @@ interface SessionLogProps {
   sessions: Session[];
   students: Student[];
   teachers: Teacher[];
-  onAddSession: (session: Omit<Session, 'id'>) => Promise<void> | void;
+  onAddSession: (session: Omit<Session, 'id'>) => Promise<Session>;
   onUpdateSession: (session: Session) => Promise<void> | void;
   onDeleteSession: (id: string) => Promise<void> | void;
   onUpdateStudent: (student: Student) => Promise<void> | void;
@@ -278,7 +278,11 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
           studentId: id,
           status: studentStatuses[id] || AttendanceStatus.Present
         };
-        if (typeof studentTrials[id] === 'boolean') entry.isTrial = studentTrials[id];
+        // Only attach a per-student trial override when this is NOT a whole-session
+        // trial and the student is explicitly marked trial. Writing an explicit
+        // `false` here used to BEAT the session-level "Trial lesson" flag (per
+        // isTrialForStudent), leaving a "free" student consuming a paid package slot.
+        if (!isTrial && studentTrials[id] === true) entry.isTrial = true;
         return entry;
       });
 
@@ -310,7 +314,11 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
       if (editingSessionId) {
         await onUpdateSession({ ...sessionData, id: editingSessionId });
       } else {
-        await onAddSession(sessionData);
+        // Capture the new id and switch into "editing" mode immediately. If a
+        // progress-note write below fails and the user retries, we go through the
+        // update path instead of inserting (and re-charging) a duplicate session.
+        const created = await onAddSession(sessionData);
+        if (created?.id) setEditingSessionId(created.id);
       }
 
       // Then persist progress notes for each student in parallel.
@@ -686,7 +694,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
                   <input
                     type="checkbox"
                     checked={isTrial}
-                    onChange={e => setIsTrial(e.target.checked)}
+                    onChange={e => { setIsTrial(e.target.checked); if (e.target.checked) setStudentTrials({}); }}
                     className="mt-0.5 w-4 h-4 accent-amber-600"
                   />
                   <div className="flex-1">

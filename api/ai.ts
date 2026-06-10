@@ -59,8 +59,37 @@ Keep it under 200 words.
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
+// Verify the caller holds a valid Supabase session. Without this, the endpoint
+// is an open proxy: anyone on the internet could POST here and burn the Gemini
+// quota (a billing-DoS and free-LLM-relay risk). We validate the bearer token
+// against Supabase's /auth/v1/user endpoint — a 200 means the JWT is genuine
+// and unexpired.
+const SUPABASE_URL = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? process.env.VITE_SUPABASE_ANON_KEY;
+
+async function isAuthenticated(req: Request): Promise<boolean> {
+  const auth = req.headers.get('authorization') ?? '';
+  const token = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim() : '';
+  if (!token || !SUPABASE_URL || !SUPABASE_ANON_KEY) return false;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      headers: { apikey: SUPABASE_ANON_KEY, authorization: `Bearer ${token}` }
+    });
+    return res.status === 200;
+  } catch {
+    return false;
+  }
+}
+
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return json(405, { error: 'Method not allowed' });
+
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    return json(500, { error: 'Auth not configured on server' });
+  }
+  if (!(await isAuthenticated(req))) {
+    return json(401, { error: 'Unauthorized' });
+  }
 
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return json(500, { error: 'GEMINI_API_KEY not configured on server' });
@@ -81,8 +110,8 @@ export default async function handler(req: Request): Promise<Response> {
     prompt = buildLessonPlanPrompt(p);
   } else if (body.task === 'student_report') {
     const p = body.payload as StudentReportInput | undefined;
-    if (!p || !p.studentName) {
-      return json(400, { error: 'student_report requires studentName' });
+    if (!p || !p.studentName || !Array.isArray(p.classTypes) || !Array.isArray(p.sessions)) {
+      return json(400, { error: 'student_report requires studentName, classTypes[] and sessions[]' });
     }
     prompt = buildStudentReportPrompt(p);
   } else {

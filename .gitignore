@@ -23,5 +23,9 @@ dist-ssr
 *.sln
 *.sw?
 .vercel
-.env*.local
+# Env files — ignore all variants (incl. a bare `.env`, which can hold the
+# server-side GEMINI_API_KEY) but keep an example file if one is added.
+.env
+.env.*
+!.env.example
 .claude

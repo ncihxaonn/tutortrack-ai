@@ -10,7 +10,7 @@ import TeacherList from './components/TeacherList';
 import LoginPage from './components/LoginPage';
 import { TabItem, Student, Session, Payment, Teacher } from './types';
 import { Currency, BASE_CURRENCY, fetchRate } from './lib/currency';
-import { newId } from './lib/dateUtils';
+import { newId, todayLocalKey } from './lib/dateUtils';
 import { AuthProvider, useAuth } from './lib/authContext';
 import {
   fetchAll,
@@ -136,6 +136,10 @@ const AppInner: React.FC = () => {
         if (cancelled) return;
         const msg = e instanceof Error ? e.message : String(e);
         setRateError(msg || 'Failed to fetch rate');
+        // Invalidate the rate so formatMoney falls back to base-currency display
+        // rather than mislabeling CNY amounts with a stale/1.0 rate as AUD.
+        setRate(NaN);
+        setRateFetchedAt(null);
       })
       .finally(() => {
         if (!cancelled) setRateLoading(false);
@@ -162,10 +166,11 @@ const AppInner: React.FC = () => {
     incoming.forEach(s => incomingMap.set(s.id, s));
     const next = studentsRef.current.map(s => incomingMap.get(s.id) ?? s);
     commitStudents(next);
-    if (selectedStudent && incomingMap.has(selectedStudent.id)) {
-      const refreshed = incomingMap.get(selectedStudent.id)!;
-      setSelectedStudent(refreshed);
-    }
+    // Functional update so an open StudentDetail panel always refreshes with the
+    // RPC-returned row. Reading `selectedStudent` directly here captured the
+    // first-render value (null) inside the memoized handlers, so the panel never
+    // updated after a payment/session change and could then write a stale balance back.
+    setSelectedStudent(prev => (prev && incomingMap.has(prev.id) ? incomingMap.get(prev.id)! : prev));
   };
 
   // ── Students ──────────────────────────────────────────────────────────
@@ -177,7 +182,9 @@ const AppInner: React.FC = () => {
       ...newStudentData,
       id: newId('s'),
       joinedDate: new Date().toISOString(),
-      status: 'Active'
+      status: 'Active',
+      // Balance is owned by the payment RPCs — never seed it from form input.
+      balance: 0
     };
     await withSync('Add student', () => dbUpsertStudent(newStudent));
     commitStudents([...studentsRef.current, newStudent]);
@@ -205,9 +212,14 @@ const AppInner: React.FC = () => {
 
   const handleUpdateStudent = useCallback(async (updated: Student) => {
     await withSync('Update student', () => dbUpsertStudent(updated));
-    commitStudents(studentsRef.current.map(s => s.id === updated.id ? updated : s));
-    if (selectedStudent?.id === updated.id) setSelectedStudent(updated);
-  }, [commitStudents, withSync, selectedStudent]);
+    // Balance is owned exclusively by the payment/session RPCs. A profile, package,
+    // or progress edit must never write balance — neither to the DB (fromStudent
+    // omits it) nor to local state here, where `updated` may carry a stale value.
+    const prevBalance = studentsRef.current.find(s => s.id === updated.id)?.balance;
+    const merged: Student = prevBalance == null ? updated : { ...updated, balance: prevBalance };
+    commitStudents(studentsRef.current.map(s => s.id === merged.id ? merged : s));
+    setSelectedStudent(prev => (prev && prev.id === merged.id ? merged : prev));
+  }, [commitStudents, withSync]);
 
   const handleDeleteStudent = useCallback(async (id: string) => {
     await withSync('Delete student', () => dbDeleteStudent(id));
@@ -216,11 +228,12 @@ const AppInner: React.FC = () => {
   }, [commitStudents, withSync, selectedStudent]);
 
   // ── Sessions (atomic via RPC) ────────────────────────────────────────
-  const handleAddSession = useCallback(async (data: Omit<Session, 'id'>) => {
+  const handleAddSession = useCallback(async (data: Omit<Session, 'id'>): Promise<Session> => {
     const newSession: Session = { ...data, id: newId('sess') };
     const { session, students: affected } = await withSync('Add session', () => rpcSaveSession(newSession));
     commitSessions([...sessionsRef.current, session]);
     mergeStudents(affected);
+    return session;
   }, [commitSessions, withSync]);
 
   const handleUpdateSession = useCallback(async (updated: Session) => {
@@ -252,9 +265,9 @@ const AppInner: React.FC = () => {
   }, [commitPayments, withSync]);
 
   const handleUpdatePayment = useCallback(async (updated: Payment) => {
-    const { payment: saved, student } = await withSync('Update payment', () => rpcUpdatePayment(updated));
+    const { payment: saved, students } = await withSync('Update payment', () => rpcUpdatePayment(updated));
     commitPayments(paymentsRef.current.map(p => p.id === saved.id ? saved : p));
-    mergeStudents([student]);
+    mergeStudents(students);
   }, [commitPayments, withSync]);
 
   const handleDeletePayment = useCallback(async (id: string) => {
@@ -268,7 +281,9 @@ const AppInner: React.FC = () => {
     const newTeacher: Teacher = {
       ...data,
       id: newId('t'),
-      joinedDate: new Date().toISOString().slice(0, 10),
+      // Local date key, not toISOString().slice(0,10) (which is UTC and lands on
+      // the wrong day before ~8–10am local in CN/AU timezones).
+      joinedDate: todayLocalKey(),
       status: 'Active'
     };
     await withSync('Add teacher', () => dbUpsertTeacher(newTeacher));

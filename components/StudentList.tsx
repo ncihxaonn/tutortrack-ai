@@ -68,14 +68,12 @@ const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpd
 
     const classTypes: ClassType[] = [];
     const packages: ClassPackage[] = [];
-    let initialBalance = 0;
     let autoNotes = '';
     const initialPayments: InitialPayment[] = [];
 
     if (oneOnOneEnabled) {
       classTypes.push(ClassType.OneOnOne);
       packages.push({ type: ClassType.OneOnOne, total: oneOnOneClasses, active: true });
-      initialBalance -= oneOnOnePaid;
       if (oneOnOnePaid > 0) {
         autoNotes += `Initial Payment: ${CURRENCY_SYMBOLS.CNY}${oneOnOnePaid} for ${oneOnOneClasses} One-on-One sessions. `;
         // Include classCount/classType so this payment is visible in the
@@ -87,7 +85,6 @@ const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpd
     if (groupEnabled) {
       classTypes.push(ClassType.Group);
       packages.push({ type: ClassType.Group, total: groupClasses, active: true });
-      initialBalance -= groupPaid;
       if (groupPaid > 0) {
         autoNotes += `Initial Payment: ${CURRENCY_SYMBOLS.CNY}${groupPaid} for ${groupClasses} One-on-Two sessions. `;
         initialPayments.push({ amount: groupPaid, label: 'Initial One-on-Two package', classCount: groupClasses, classType: ClassType.Group });
@@ -104,7 +101,10 @@ const StudentList: React.FC<StudentListProps> = ({ students, onAddStudent, onUpd
         classTypes,
         packages,
         notes: finalNotes,
-        balance: initialBalance,
+        // Balance starts at 0; the record_payment RPC is the single place that
+        // applies each initial payment to the balance. Pre-subtracting here too
+        // double-counted every prepayment.
+        balance: 0,
         progressHistory: []
       }, initialPayments);
       setIsAdding(false);

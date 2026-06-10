@@ -4,42 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>TutorTrack</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&display=swap" rel="stylesheet">
-    <script>
-      tailwind.config = {
-        theme: {
-          extend: {
-            colors: {
-              cream: { DEFAULT: '#FAF7F2', soft: '#F5EFE4', border: '#EDE5D7' },
-              coral: { 50: '#FDF2EB', 100: '#FBECE2', 200: '#F7DCC9', 500: '#D97757', 600: '#C6613F', 700: '#B45A3C', 800: '#923B20' }
-            },
-            fontFamily: {
-              sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
-              serif: ['Fraunces', 'ui-serif', 'Georgia', 'serif']
-            },
-            keyframes: {
-              shake: {
-                '0%,100%': { transform: 'translateX(0)' },
-                '20%,60%': { transform: 'translateX(-8px)' },
-                '40%,80%': { transform: 'translateX(8px)' }
-              }
-            },
-            animation: {
-              shake: 'shake 0.45s ease-in-out'
-            }
-          }
-        }
-      }
-    </script>
-    <style>
-      body { font-family: 'Inter', sans-serif; background-color: #FAF7F2; color: #1C1917; }
-      ::-webkit-scrollbar { width: 6px; height: 6px; }
-      ::-webkit-scrollbar-track { background: transparent; }
-      ::-webkit-scrollbar-thumb { background: #D6CAB4; border-radius: 3px; }
-      ::-webkit-scrollbar-thumb:hover { background: #B0A08A; }
-      .font-serif { letter-spacing: -0.01em; }
-    </style>
   </head>
   <body class="bg-cream text-stone-900 antialiased">
     <div id="root"></div>

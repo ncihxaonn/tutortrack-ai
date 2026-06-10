@@ -28,11 +28,16 @@ const Dashboard: React.FC<DashboardProps> = ({ students, sessions }) => {
     return map;
   }, [sessions]);
 
-  const paidSessions = useMemo(() => sessions.filter(s => !s.isTrial), [sessions]);
+  // A session is "paid" if at least one attendee is non-trial. Using the
+  // session-level isTrial flag alone misclassified mixed sessions where every
+  // student was individually marked trial via a per-student override.
+  const isPaidSession = (s: Session) => s.studentIds.some(sid => !isTrialForStudent(s, sid));
+  const paidSessions = useMemo(() => sessions.filter(isPaidSession), [sessions]);
 
   // A session counts as "attended" for the rate if at least one non-trial
   // student was Present or Late. Per-student status takes precedence so a
-  // mixed group's stats reflect reality.
+  // mixed group's stats reflect reality. Cancelled slots are excluded entirely
+  // (the lesson didn't happen and was never billed), not counted as absences.
   const stats = useMemo(() => {
     let totalSlots = 0;
     let present = 0;
@@ -42,6 +47,7 @@ const Dashboard: React.FC<DashboardProps> = ({ students, sessions }) => {
       for (const sid of s.studentIds) {
         if (isTrialForStudent(s, sid)) continue;
         const st = statusForStudent(s, sid);
+        if (st === AttendanceStatus.Cancelled) continue;
         totalSlots++;
         if (st === AttendanceStatus.Present) present++;
         else if (st === AttendanceStatus.Late) late++;
@@ -68,8 +74,8 @@ const Dashboard: React.FC<DashboardProps> = ({ students, sessions }) => {
       return {
         name: day.toLocaleDateString('en-US', { weekday: 'short' }),
         fullDate: key,
-        count: daySessions.filter(s => !s.isTrial).length,
-        trials: daySessions.filter(s => s.isTrial).length
+        count: daySessions.filter(isPaidSession).length,
+        trials: daySessions.filter(s => !isPaidSession(s)).length
       };
     });
   }, [sessionsByLocalDay]);

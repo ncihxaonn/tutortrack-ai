@@ -39,6 +39,14 @@ export const localDateOnlyToISO = (dateStr: string): string => {
   return new Date(y, (m || 1) - 1, d || 1, 0, 0, 0).toISOString();
 };
 
+// Parses a date-only 'YYYY-MM-DD' string into a Date at LOCAL midnight. Use this
+// for display instead of `new Date('YYYY-MM-DD')`, which parses as UTC midnight
+// and renders one day earlier in UTC-negative timezones.
+export const parseLocalDateKey = (s: string): Date => {
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(y, (m || 1) - 1, d || 1);
+};
+
 // Returns true if the given ISO timestamp falls on the same LOCAL day as `dayKey` (YYYY-MM-DD).
 export const isOnLocalDay = (iso: string, dayKey: string): boolean => {
   return localDateKey(iso) === dayKey;

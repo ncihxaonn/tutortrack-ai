@@ -71,6 +71,12 @@ export function formatMoney(
   currency: Currency,
   rate: number
 ): string {
+  // Never apply a missing/failed rate to a non-base currency — that would label
+  // raw CNY magnitudes as A$ (a ~4.7x overstatement). When the rate is unusable,
+  // fall back to displaying the real base-currency amount instead.
+  if (currency !== BASE_CURRENCY && (!Number.isFinite(rate) || rate <= 0)) {
+    currency = BASE_CURRENCY;
+  }
   const symbol = CURRENCY_SYMBOLS[currency];
   const sign = amountInBase < 0 ? '-' : '';
   const abs = Math.abs(amountInBase);

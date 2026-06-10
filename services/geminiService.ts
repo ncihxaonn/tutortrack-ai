@@ -1,14 +1,22 @@
 import { Student, Session } from '../types';
 import { ENV } from '../lib/env';
+import { supabase } from './supabaseClient';
 
 // All AI requests go through the Vercel serverless function at /api/ai so the
 // Gemini API key stays server-side. The previous in-bundle key was extractable
-// by anyone with the JS file.
+// by anyone with the JS file. The proxy now also requires a valid Supabase
+// session, so we forward the current user's access token.
 
 async function callProxy(task: 'lesson_plan' | 'student_report', payload: unknown): Promise<string> {
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  if (!token) throw new Error('You must be signed in to use AI features.');
   const res = await fetch(ENV.GEMINI_PROXY_URL, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${token}`
+    },
     body: JSON.stringify({ task, payload })
   });
   if (!res.ok) {

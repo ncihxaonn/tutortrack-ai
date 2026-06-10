@@ -4,8 +4,9 @@ import { X, Sparkles, PlusCircle, Edit2, Save, XCircle, TrendingUp, Activity, Tr
 import { generateStudentReport } from '../services/geminiService';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { CURRENCY_SYMBOLS, Currency, formatMoney } from '../lib/currency';
-import { isTrialForStudent, isChargeableStatus } from '../lib/sessionHelpers';
-import { localDateKey, localDateTimeInputValue, localDateOnlyToISO, todayLocalKey, newId } from '../lib/dateUtils';
+import { isTrialForStudent, isChargeableStatus, isChargeableForStudent } from '../lib/sessionHelpers';
+import { localDateKey, localDateTimeInputValue, localDateOnlyToISO, todayLocalKey, newId, parseLocalDateKey } from '../lib/dateUtils';
+import { PRICE_1ON1, PRICE_GROUP, DEFAULT_PACKAGE_SIZE } from '../constants';
 
 interface StudentDetailProps {
   student: Student;
@@ -89,6 +90,9 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
     for (const s of studentSessions) {
       if (isTrialForStudent(s, student.id)) continue;
       const my = s.studentStatuses?.find(ss => ss.studentId === student.id)?.status || s.status;
+      // A cancelled lesson didn't take place and was never billed — exclude it
+      // from the rate rather than counting it as an absence.
+      if (my === AttendanceStatus.Cancelled) continue;
       total++;
       if (my === AttendanceStatus.Present) present++;
       if (isChargeableStatus(my)) chargeable++;
@@ -115,7 +119,39 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
     }
     return map;
   }, [studentSessions, student.id]);
-  const PACKAGE_SIZE = 10;
+
+  // Package sizes per class type, derived from payment classCounts (the source of
+  // truth for how big each purchased package was). Lets lesson badges show the
+  // real "lesson N of package P" instead of assuming every package is 10.
+  const packageSizesByType = useMemo(() => {
+    const map = new Map<ClassType, number[]>();
+    (payments || [])
+      .filter(p => p.studentId === student.id && p.classType && typeof p.classCount === 'number' && (p.classCount as number) > 0)
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+      .forEach(p => {
+        const t = p.classType as ClassType;
+        if (!map.has(t)) map.set(t, []);
+        map.get(t)!.push(p.classCount as number);
+      });
+    return map;
+  }, [payments, student.id]);
+
+  // Translate a 1-based global lesson number for a class type into its package
+  // index and position within that package, using the real purchased sizes.
+  const locateLesson = (type: ClassType, lessonNum: number): { pkg: number; inPkg: number } => {
+    const sizes = packageSizesByType.get(type);
+    if (!sizes || sizes.length === 0) {
+      return { pkg: Math.floor((lessonNum - 1) / DEFAULT_PACKAGE_SIZE) + 1, inPkg: ((lessonNum - 1) % DEFAULT_PACKAGE_SIZE) + 1 };
+    }
+    let remaining = lessonNum;
+    for (let i = 0; i < sizes.length; i++) {
+      if (remaining <= sizes[i]) return { pkg: i + 1, inPkg: remaining };
+      remaining -= sizes[i];
+    }
+    // Beyond all purchased packages — extend using the most recent package's size.
+    const lastSize = sizes[sizes.length - 1] || DEFAULT_PACKAGE_SIZE;
+    return { pkg: sizes.length + Math.floor((remaining - 1) / lastSize) + 1, inPkg: ((remaining - 1) % lastSize) + 1 };
+  };
   
   // Charts Data
   const progressHistory = student.progressHistory || [];
@@ -168,25 +204,25 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
       try {
           setIsSaving(true);
           setSaveError(null);
-          // Update packages/classTypes ONLY — don't touch balance here. The
-          // payment log below subtracts renewCost from the balance. If we
-          // also subtracted here, the cost would be applied twice.
+          // Record the payment FIRST — payments are the source of truth for the
+          // Overview package card and purchase history. Always create it when
+          // classes are being added (even a free/comp renewal with amount 0) so a
+          // zero-cost renewal still shows up. The payment RPC is the only thing
+          // that touches balance.
+          await onUpdatePayment(student.id, Math.max(0, renewCost), {
+              date: localDateOnlyToISO(renewDate),
+              method: renewMethod || 'WeChat',
+              classCount: renewClasses,
+              classType: renewType
+          });
+          // Then update the (legacy) packages/classTypes list. The card no longer
+          // depends on this and balance is untouched here, so it can't double-charge
+          // or, on retry, double-bump the package totals.
           await onUpdateStudent({
               ...student,
               packages: newPackages,
               classTypes: newClassTypes
           });
-          // Create a Payment record so it shows in History → Purchases and the
-          // package card on Overview (which is computed from payments) updates.
-          // This also subtracts renewCost from the student's balance.
-          if (renewCost > 0) {
-              await onUpdatePayment(student.id, renewCost, {
-                  date: localDateOnlyToISO(renewDate),
-                  method: renewMethod || 'WeChat',
-                  classCount: renewClasses,
-                  classType: renewType
-              });
-          }
           setIsRenewing(false);
           setRenewClasses(10);
           setRenewCost(400);
@@ -303,7 +339,15 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
   // ── Session edit/delete ────────────────────────────────────────────
   const startEditSession = (s: Session) => {
       setEditingSessionId(s.id);
-      setEditSessionData({ ...s, studentStatuses: s.studentStatuses ? [...s.studentStatuses] : [] });
+      // Seed an explicit per-student status entry for EVERY participant (preserving
+      // any existing entry, incl. its trial override). Otherwise a legacy session
+      // with a partial studentStatuses array could have one student's edit
+      // implicitly flip an unentered student to the recomputed summary status.
+      const seeded = s.studentIds.map(sid => {
+        const existing = s.studentStatuses?.find(ss => ss.studentId === sid);
+        return existing ? { ...existing } : { studentId: sid, status: s.status };
+      });
+      setEditSessionData({ ...s, studentStatuses: seeded });
       setSaveError(null);
   };
 
@@ -315,10 +359,18 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
 
   const saveEditSession = async () => {
       if (!editSessionData || !onUpdateSession) return;
+      // Recompute price from the (possibly edited) type and per-student trial
+      // flags — mirroring SessionLog. The save_session RPC divides the stored
+      // price by the CURRENT non-trial headcount, so a stale price would over- or
+      // under-charge (e.g. trialing one of two students would double the other's bill).
+      const nonTrial = editSessionData.studentIds.filter(sid => !isTrialForStudent(editSessionData, sid)).length;
+      const unit = editSessionData.type === ClassType.OneOnOne ? PRICE_1ON1 : PRICE_GROUP;
+      const price = editSessionData.isTrial ? 0 : unit * nonTrial;
+      const payload: Session = { ...editSessionData, price };
       try {
           setIsSaving(true);
           setSaveError(null);
-          await onUpdateSession(editSessionData);
+          await onUpdateSession(payload);
           setEditingSessionId(null);
           setEditSessionData(null);
       } catch (err: any) {
@@ -736,8 +788,9 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
                         return (
                         <div className="space-y-3">
                             {visible.map(({ type, total, previousTotal, latestPaymentDate }) => {
-                                // Total attended for this type (Present, non-trial)
-                                const totalAttendedForType = studentSessions.filter(s => s.type === type && s.status === AttendanceStatus.Present && !isTrialForStudent(s, student.id)).length;
+                                // Total chargeable for this type — per-student status, counting
+                                // Present AND Late (matches lesson numbering and the SQL charge logic).
+                                const totalAttendedForType = studentSessions.filter(s => s.type === type && isChargeableForStudent(s, student.id)).length;
                                 // Subtract sessions that belong to earlier (finished) packages of the same type
                                 const attendedForType = Math.max(0, Math.min(total, totalAttendedForType - previousTotal));
                                 const isEditing = false; // legacy package edit form is disabled in payment-driven mode
@@ -857,7 +910,7 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
                                 <ResponsiveContainer width="100%" height="100%">
                                     <LineChart data={progressHistory}>
                                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                                        <XAxis dataKey="date" tick={{fontSize: 10, fill: '#64748b'}} tickFormatter={d => new Date(d).toLocaleDateString(undefined, {month:'short', day:'numeric'})} />
+                                        <XAxis dataKey="date" tick={{fontSize: 10, fill: '#64748b'}} tickFormatter={d => parseLocalDateKey(d).toLocaleDateString(undefined, {month:'short', day:'numeric'})} />
                                         <YAxis domain={[0, 100]} tick={{fontSize: 10, fill: '#64748b'}} />
                                         <Tooltip contentStyle={{borderRadius: '8px', fontSize: '12px'}} />
                                         <Legend wrapperStyle={{fontSize: '11px', marginTop: '10px'}} />
@@ -985,7 +1038,7 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
                                 ) : (
                                     <>
                                         <div className="flex justify-between items-start mb-2">
-                                            <span className="text-xs font-bold text-stone-500">{new Date(log.date).toLocaleDateString()}</span>
+                                            <span className="text-xs font-bold text-stone-500">{parseLocalDateKey(log.date).toLocaleDateString()}</span>
                                             <div className="flex items-center gap-1">
                                                 <div className="flex gap-2 mr-2">
                                                     <span className="text-[10px] font-medium bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">R: {log.reading}</span>
@@ -1029,12 +1082,13 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
                     {historyTab === 'classes' ? (
                         <div className="space-y-3">
                             {studentSessions.length === 0 && <p className="text-sm text-stone-400">No session history found.</p>}
-                            {studentSessions.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(session => {
+                            {[...studentSessions].sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(session => {
                                 const myStatus = session.studentStatuses?.find(s => s.studentId === student.id)?.status || session.status;
                                 const myIsTrial = isTrialForStudent(session, student.id);
                                 const lessonNum = lessonNumberMap.get(session.id);
-                                const pkgIndex = lessonNum ? Math.floor((lessonNum - 1) / PACKAGE_SIZE) + 1 : null;
-                                const inPkgIndex = lessonNum ? ((lessonNum - 1) % PACKAGE_SIZE) + 1 : null;
+                                const loc = lessonNum ? locateLesson(session.type, lessonNum) : null;
+                                const pkgIndex = loc ? loc.pkg : null;
+                                const inPkgIndex = loc ? loc.inPkg : null;
                                 const isEditing = editingSessionId === session.id && editSessionData;
                                 if (isEditing && editSessionData) {
                                     const editStatus = editSessionData.studentStatuses?.find(s => s.studentId === student.id)?.status || editSessionData.status;
