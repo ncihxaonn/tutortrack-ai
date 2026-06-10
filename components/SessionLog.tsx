@@ -1,7 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Session, Student, AttendanceStatus, ClassType, StudentSessionStatus, SkillProgress, Teacher } from '../types';
-import { Calendar as CalendarIcon, CheckCircle, AlertTriangle, Sparkles, ChevronLeft, ChevronRight, X, Trash2, Search, ChevronDown, ChevronUp, MoreVertical, TrendingUp } from 'lucide-react';
-import { generateLessonPlan } from '../services/geminiService';
+import { Calendar as CalendarIcon, CheckCircle, AlertTriangle, ChevronLeft, ChevronRight, X, Trash2, Search, ChevronDown, ChevronUp, MoreVertical, TrendingUp } from 'lucide-react';
 import { PRICE_1ON1, PRICE_GROUP } from '../constants';
 import { localDateKey, localDateTimeToISO, todayLocalKey, newId } from '../lib/dateUtils';
 
@@ -51,10 +50,6 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
   // Dropdown UI State
   const [isStudentDropdownOpen, setIsStudentDropdownOpen] = useState(false);
   const [studentSearch, setStudentSearch] = useState('');
-
-  // AI State
-  const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
-  const [generatedPlan, setGeneratedPlan] = useState('');
 
   // Memoize lookup maps so calendar rows aren't doing N*M finds.
   const studentsById = useMemo(() => {
@@ -175,7 +170,6 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
     setNotes(session.notes);
     setIsTrial(!!session.isTrial);
     setTeacherId(session.teacherId || '');
-    setGeneratedPlan('');
     setTempProgress({});
     setSaveError(null);
     setIsModalOpen(true);
@@ -245,19 +239,6 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
     }));
   };
 
-  const handleGeneratePlan = async () => {
-    if (!topic || selectedStudents.length === 0) return;
-    setIsGeneratingPlan(true);
-    try {
-      const studentNames = students.filter(s => selectedStudents.includes(s.id)).map(s => s.name);
-      const plan = await generateLessonPlan(topic, studentNames, 60);
-      setGeneratedPlan(plan);
-      setNotes(prev => prev + (prev ? '\n\n' : '') + 'Lesson Plan: ' + topic);
-    } finally {
-      setIsGeneratingPlan(false);
-    }
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (selectedStudents.length === 0) return;
@@ -305,7 +286,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
         studentStatuses: studentStatusesArray,
         type: sessionType,
         topic,
-        notes: generatedPlan ? `${notes}\n\n--- AI Plan ---\n${generatedPlan}` : notes,
+        notes,
         price: totalPrice,
         isTrial,
         teacherId: teacherId || undefined
@@ -379,7 +360,6 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
     setStudentTrials({});
     setTopic('');
     setNotes('');
-    setGeneratedPlan('');
     setSessionType(ClassType.OneOnOne);
     setEditingSessionId(null);
     setStudentSearch('');
@@ -862,32 +842,14 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
                 />
               </div>
 
-              <div className="relative">
-                <textarea
-                  placeholder="General session notes…"
-                  aria-label="Session notes"
-                  value={notes}
-                  onChange={e => setNotes(e.target.value)}
-                  className="w-full p-2 border rounded-md"
-                  rows={3}
-                />
-                <button
-                  type="button"
-                  disabled={!topic || selectedStudents.length === 0 || isGeneratingPlan}
-                  onClick={handleGeneratePlan}
-                  className="absolute bottom-2 right-2 text-xs flex items-center gap-1 bg-coral-100 text-violet-700 px-2 py-1 rounded-md hover:bg-violet-200 disabled:opacity-50"
-                >
-                  <Sparkles className="w-3 h-3" />
-                  {isGeneratingPlan ? 'Generating…' : 'AI Plan'}
-                </button>
-              </div>
-
-              {generatedPlan && (
-                <div className="bg-coral-50 p-3 rounded-md text-xs text-stone-700 max-h-40 overflow-y-auto whitespace-pre-wrap border border-violet-100">
-                  <h4 className="font-semibold text-violet-800 mb-1">Generated Plan Preview:</h4>
-                  {generatedPlan}
-                </div>
-              )}
+              <textarea
+                placeholder="General session notes…"
+                aria-label="Session notes"
+                value={notes}
+                onChange={e => setNotes(e.target.value)}
+                className="w-full p-2 border rounded-md"
+                rows={3}
+              />
 
               {saveError && <p className="text-xs text-red-600">{saveError}</p>}
 

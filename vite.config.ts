@@ -3,9 +3,9 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig(({ mode }) => {
-  // Pull SUPABASE_*/GEMINI_API_KEY from .env even though they don't have the
-  // VITE_ prefix — Vite would otherwise hide them. We expose them via
-  // import.meta.env for the legacy fallback in lib/env.ts.
+  // Pull SUPABASE_* from .env even though they don't have the VITE_ prefix —
+  // Vite would otherwise hide them. We expose them via import.meta.env for the
+  // legacy fallback in lib/env.ts.
   const env = loadEnv(mode, '.', '');
   const exposed: Record<string, string> = {};
   for (const k of ['SUPABASE_URL', 'SUPABASE_ANON_KEY']) {

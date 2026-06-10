@@ -1,7 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Student, Session, Payment, AttendanceStatus, ClassType, ClassPackage, SkillProgress } from '../types';
-import { X, Sparkles, PlusCircle, Edit2, Save, XCircle, TrendingUp, Activity, Trash2, AlertTriangle } from 'lucide-react';
-import { generateStudentReport } from '../services/geminiService';
+import { X, PlusCircle, Edit2, Save, XCircle, TrendingUp, Activity, Trash2, AlertTriangle } from 'lucide-react';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { CURRENCY_SYMBOLS, Currency, formatMoney } from '../lib/currency';
 import { isTrialForStudent, isChargeableStatus, isChargeableForStudent } from '../lib/sessionHelpers';
@@ -26,8 +25,6 @@ interface StudentDetailProps {
 const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, payments, onClose, onUpdatePayment, onUpdateStudent, onUpdateSession, onDeleteSession, onSavePayment, onDeletePayment, currency = 'CNY' as Currency, rate = 1 }) => {
   const [activeTab, setActiveTab] = useState<'overview' | 'progress' | 'history'>('overview');
   const [historyTab, setHistoryTab] = useState<'classes' | 'purchases'>('classes');
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [aiReport, setAiReport] = useState<string | null>(null);
 
   // Renew Package State
   const [isRenewing, setIsRenewing] = useState(false);
@@ -165,13 +162,6 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
     { subject: 'Listening', A: latestProgress.listening, fullMark: 100 },
     { subject: 'Speaking', A: latestProgress.speaking, fullMark: 100 },
   ];
-
-  const handleGenerateReport = async () => {
-    setIsGenerating(true);
-    const report = await generateStudentReport(student, studentSessions.slice(0, 5));
-    setAiReport(report);
-    setIsGenerating(false);
-  };
 
   const handleRenewPackage = async (e: React.FormEvent) => {
       e.preventDefault();
@@ -872,30 +862,6 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
                         );
                     })()}
 
-                    {/* AI Report Section */}
-                    <div className="bg-coral-50 rounded-xl p-5 border border-violet-100">
-                        <div className="flex justify-between items-center mb-3">
-                            <h3 className="font-semibold text-violet-900 flex items-center gap-2">
-                                <Sparkles className="w-4 h-4" /> AI Progress Report
-                            </h3>
-                            <button 
-                                onClick={handleGenerateReport}
-                                disabled={isGenerating}
-                                className="text-xs bg-violet-200 text-violet-800 px-2 py-1 rounded hover:bg-violet-300 disabled:opacity-50 transition-colors"
-                            >
-                                {isGenerating ? 'Drafting...' : 'Generate New'}
-                            </button>
-                        </div>
-                        {aiReport ? (
-                            <div className="bg-white p-4 rounded-lg border border-violet-100 text-sm text-stone-600 leading-relaxed whitespace-pre-line">
-                                {aiReport}
-                            </div>
-                        ) : (
-                            <p className="text-sm text-violet-700/70">
-                                Click generate to create a professional email update for {student.parentName}.
-                            </p>
-                        )}
-                    </div>
                 </>
             ) : activeTab === 'progress' ? (
                 <div className="space-y-6">
