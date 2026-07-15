@@ -1,8 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { Session, Student, AttendanceStatus, ClassType, StudentSessionStatus, SkillProgress, Teacher } from '../types';
 import { Calendar as CalendarIcon, CheckCircle, AlertTriangle, ChevronLeft, ChevronRight, X, Trash2, Search, ChevronDown, ChevronUp, MoreVertical, TrendingUp } from 'lucide-react';
-import { PRICE_1ON1, PRICE_GROUP } from '../constants';
-import { localDateKey, localDateTimeToISO, todayLocalKey, newId } from '../lib/dateUtils';
+import { PRICE_1ON1, PRICE_GROUP, DEFAULT_SESSION_MINUTES, SESSION_DURATION_CHOICES } from '../constants';
+import { localDateKey, localDateTimeToISO, todayLocalKey, newId, formatDuration, formatDurationShort } from '../lib/dateUtils';
 
 interface SessionLogProps {
   sessions: Session[];
@@ -36,6 +36,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
 
   const [date, setDate] = useState('');
   const [time, setTime] = useState('14:00');
+  const [durationMinutes, setDurationMinutes] = useState<number>(DEFAULT_SESSION_MINUTES);
   const [topic, setTopic] = useState('');
   const [sessionType, setSessionType] = useState<ClassType>(ClassType.OneOnOne);
   const [notes, setNotes] = useState('');
@@ -165,6 +166,8 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
     const pad = (n: number) => String(n).padStart(2, '0');
     setDate(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
     setTime(`${pad(d.getHours())}:${pad(d.getMinutes())}`);
+    // Fall back to the default rather than 0/NaN if an old row has no duration.
+    setDurationMinutes(session.durationMinutes || DEFAULT_SESSION_MINUTES);
     setTopic(session.topic);
     setSessionType(session.type);
     setNotes(session.notes);
@@ -281,7 +284,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
       const sessionData: Omit<Session, 'id'> = {
         studentIds: selectedStudents,
         date: sessionISO,
-        durationMinutes: 60,
+        durationMinutes,
         status: overallStatus,
         studentStatuses: studentStatusesArray,
         type: sessionType,
@@ -358,6 +361,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
     setSelectedStudents([]);
     setStudentStatuses({});
     setStudentTrials({});
+    setDurationMinutes(DEFAULT_SESSION_MINUTES);
     setTopic('');
     setNotes('');
     setSessionType(ClassType.OneOnOne);
@@ -427,6 +431,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
                     </div>
                     <div className="text-xs opacity-75">
                       {new Date(session.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      {session.durationMinutes > 0 && <span className="ml-1">· {formatDurationShort(session.durationMinutes)}</span>}
                       {session.teacherId && (() => {
                         const t = teachersById.get(session.teacherId);
                         return t ? <span className="ml-1">· {t.name.split(' ')[0]}</span> : null;
@@ -486,6 +491,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
                     <div className="flex justify-between items-start mb-1">
                       <span className="text-xs font-bold opacity-75">
                         {new Date(session.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {session.durationMinutes > 0 && <span className="font-medium"> · {formatDurationShort(session.durationMinutes)}</span>}
                       </span>
                       {session.isTrial && <span className="text-[8px] uppercase font-bold bg-amber-200 text-amber-900 px-1 rounded">Trial</span>}
                     </div>
@@ -808,7 +814,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
                 <div>
                   <label className="block text-xs font-medium text-stone-500 mb-1">Date</label>
                   <input
@@ -828,6 +834,25 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
                     className="p-2 border rounded-md w-full"
                     required
                   />
+                </div>
+                <div className="col-span-2 sm:col-span-1">
+                  <label className="block text-xs font-medium text-stone-500 mb-1">Duration</label>
+                  <select
+                    aria-label="Class duration"
+                    value={durationMinutes}
+                    onChange={e => setDurationMinutes(Number(e.target.value))}
+                    className="p-2 border rounded-md w-full bg-white"
+                  >
+                    {/* An existing session may hold a length that's not on the list
+                        (e.g. the old hardcoded 60) — keep it so editing can't silently
+                        change it just by opening and saving. */}
+                    {(SESSION_DURATION_CHOICES.includes(durationMinutes)
+                      ? SESSION_DURATION_CHOICES
+                      : [...SESSION_DURATION_CHOICES, durationMinutes].sort((a, b) => a - b)
+                    ).map(mins => (
+                      <option key={mins} value={mins}>{formatDuration(mins)}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
 

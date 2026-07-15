@@ -61,6 +61,29 @@ export const isSameLocalDay = (iso: string, date: Date): boolean => {
 // Today's local YYYY-MM-DD.
 export const todayLocalKey = (): string => localDateKey(new Date());
 
+// Formats a session length for labels: 30 → '30 min', 60 → '1 hour', 90 → '1.5 hours'.
+// Handles values outside SESSION_DURATION_CHOICES so old rows still read sensibly.
+export const formatDuration = (mins: number): string => {
+  if (!Number.isFinite(mins) || mins <= 0) return '—';
+  if (mins < 60) return `${mins} min`;
+  const hours = Math.floor(mins / 60);
+  const rest = mins % 60;
+  if (rest === 0) return `${hours} ${hours === 1 ? 'hour' : 'hours'}`;
+  if (rest === 30) return `${hours}.5 hours`;
+  return `${hours} hr ${rest} min`;
+};
+
+// Compact form for the dense calendar cells: 30 → '30m', 90 → '1.5h'.
+export const formatDurationShort = (mins: number): string => {
+  if (!Number.isFinite(mins) || mins <= 0) return '';
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  const rest = mins % 60;
+  if (rest === 0) return `${hours}h`;
+  if (rest === 30) return `${hours}.5h`;
+  return `${hours}h${rest}`;
+};
+
 // Generate a fresh unique ID — uses crypto.randomUUID when available, falls
 // back to a Date.now() + random suffix so older environments don't crash.
 export const newId = (prefix = ''): string => {

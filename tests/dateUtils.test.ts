@@ -5,7 +5,9 @@ import {
   localDateTimeToISO,
   localDateOnlyToISO,
   isOnLocalDay,
-  newId
+  newId,
+  formatDuration,
+  formatDurationShort
 } from '../lib/dateUtils';
 
 describe('localDateKey', () => {
@@ -76,5 +78,47 @@ describe('newId', () => {
 
   it('applies the prefix', () => {
     expect(newId('p').startsWith('p')).toBe(true);
+  });
+});
+
+describe('formatDuration', () => {
+  it('renders sub-hour lengths in minutes', () => {
+    expect(formatDuration(30)).toBe('30 min');
+    expect(formatDuration(45)).toBe('45 min');
+  });
+
+  it('renders whole hours, singular vs plural', () => {
+    expect(formatDuration(60)).toBe('1 hour');
+    expect(formatDuration(120)).toBe('2 hours');
+  });
+
+  it('renders half hours as decimals', () => {
+    expect(formatDuration(90)).toBe('1.5 hours');
+    expect(formatDuration(150)).toBe('2.5 hours');
+  });
+
+  it('renders odd leftovers without lying about the length', () => {
+    expect(formatDuration(75)).toBe('1 hr 15 min');
+  });
+
+  it('does not render nonsense for missing/zero durations', () => {
+    expect(formatDuration(0)).toBe('—');
+    expect(formatDuration(NaN)).toBe('—');
+    expect(formatDuration(undefined as unknown as number)).toBe('—');
+  });
+});
+
+describe('formatDurationShort', () => {
+  it('compacts lengths for dense calendar cells', () => {
+    expect(formatDurationShort(30)).toBe('30m');
+    expect(formatDurationShort(60)).toBe('1h');
+    expect(formatDurationShort(90)).toBe('1.5h');
+    expect(formatDurationShort(120)).toBe('2h');
+    expect(formatDurationShort(75)).toBe('1h15');
+  });
+
+  it('renders nothing when there is no duration to show', () => {
+    expect(formatDurationShort(0)).toBe('');
+    expect(formatDurationShort(NaN)).toBe('');
   });
 });
