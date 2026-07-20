@@ -4,7 +4,7 @@ import Dashboard from './components/Dashboard';
 import Admin from './components/Admin';
 import AdminGate, { isAdminAuthenticated, lockAdmin } from './components/AdminGate';
 import StudentList from './components/StudentList';
-import SessionLog from './components/SessionLog';
+import SessionLog, { RefundInput } from './components/SessionLog';
 import StudentDetail from './components/StudentDetail';
 import TeacherList from './components/TeacherList';
 import LoginPage from './components/LoginPage';
@@ -264,6 +264,20 @@ const AppInner: React.FC = () => {
     mergeStudents([student]);
   }, [commitPayments, withSync]);
 
+  // A refund is the inverse of a purchase, so it rides the SAME atomic RPC: a
+  // payment row with a negative amount (Postgres does `balance = balance - amount`,
+  // so a negative amount puts the money back on the student's account) and a
+  // negative classCount (which shrinks their current package).
+  const handleRefund = useCallback(async (input: RefundInput) => {
+    const { studentId, amount, sessions, classType, reason } = input;
+    if (amount <= 0 && sessions <= 0) throw new Error('Refund must return money, sessions, or both.');
+    await handlePayment(studentId, -Math.abs(amount), {
+      method: reason ? `Refund — ${reason}` : 'Refund',
+      classCount: sessions > 0 ? -Math.abs(sessions) : undefined,
+      classType
+    });
+  }, [handlePayment]);
+
   const handleUpdatePayment = useCallback(async (updated: Payment) => {
     const { payment: saved, students } = await withSync('Update payment', () => rpcUpdatePayment(updated));
     commitPayments(paymentsRef.current.map(p => p.id === saved.id ? saved : p));
@@ -473,10 +487,12 @@ const AppInner: React.FC = () => {
             sessions={sessions}
             students={students}
             teachers={teachers}
+            payments={payments}
             onAddSession={handleAddSession}
             onUpdateSession={handleUpdateSession}
             onDeleteSession={handleDeleteSession}
             onUpdateStudent={handleUpdateStudent}
+            onRefund={handleRefund}
             onSelectStudent={(s) => { setSelectedStudent(s); }}
           />
         )}
@@ -487,6 +503,7 @@ const AppInner: React.FC = () => {
           student={selectedStudent}
           sessions={sessions}
           payments={payments}
+          teachers={teachers}
           onClose={() => setSelectedStudent(null)}
           onUpdatePayment={handlePayment}
           onUpdateStudent={handleUpdateStudent}

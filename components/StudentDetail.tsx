@@ -1,16 +1,18 @@
 import React, { useMemo, useState } from 'react';
-import { Student, Session, Payment, AttendanceStatus, ClassType, ClassPackage, SkillProgress } from '../types';
+import { Student, Session, Payment, AttendanceStatus, ClassType, ClassPackage, SkillProgress, Teacher } from '../types';
 import { X, PlusCircle, Edit2, Save, XCircle, TrendingUp, Activity, Trash2, AlertTriangle } from 'lucide-react';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { CURRENCY_SYMBOLS, Currency, formatMoney } from '../lib/currency';
 import { isTrialForStudent, isChargeableStatus, isChargeableForStudent } from '../lib/sessionHelpers';
 import { localDateKey, localDateTimeInputValue, localDateOnlyToISO, todayLocalKey, newId, parseLocalDateKey } from '../lib/dateUtils';
+import { derivePackages } from '../lib/packages';
 import { PRICE_1ON1, PRICE_GROUP, DEFAULT_PACKAGE_SIZE } from '../constants';
 
 interface StudentDetailProps {
   student: Student;
   sessions: Session[];
   payments: Payment[];
+  teachers?: Teacher[];
   onClose: () => void;
   onUpdatePayment: (studentId: string, amount: number, extras?: Partial<Payment>) => Promise<void> | void;
   onUpdateStudent: (student: Student) => void | Promise<void>;
@@ -22,7 +24,8 @@ interface StudentDetailProps {
   rate?: number;
 }
 
-const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, payments, onClose, onUpdatePayment, onUpdateStudent, onUpdateSession, onDeleteSession, onSavePayment, onDeletePayment, currency = 'CNY' as Currency, rate = 1 }) => {
+const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, payments, teachers = [], onClose, onUpdatePayment, onUpdateStudent, onUpdateSession, onDeleteSession, onSavePayment, onDeletePayment, currency = 'CNY' as Currency, rate = 1 }) => {
+  const teacherMap = useMemo(() => new Map(teachers.map(t => [t.id, t.name])), [teachers]);
   const [activeTab, setActiveTab] = useState<'overview' | 'progress' | 'history'>('overview');
   const [historyTab, setHistoryTab] = useState<'classes' | 'purchases'>('classes');
 
@@ -120,18 +123,17 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
   // Package sizes per class type, derived from payment classCounts (the source of
   // truth for how big each purchased package was). Lets lesson badges show the
   // real "lesson N of package P" instead of assuming every package is 10.
+  // Derived from payments, with refunds (negative classCount) already deducted.
+  const derivedPackages = useMemo(
+    () => derivePackages(payments || [], student.id),
+    [payments, student.id]
+  );
+
   const packageSizesByType = useMemo(() => {
     const map = new Map<ClassType, number[]>();
-    (payments || [])
-      .filter(p => p.studentId === student.id && p.classType && typeof p.classCount === 'number' && (p.classCount as number) > 0)
-      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-      .forEach(p => {
-        const t = p.classType as ClassType;
-        if (!map.has(t)) map.set(t, []);
-        map.get(t)!.push(p.classCount as number);
-      });
+    derivedPackages.forEach((v, type) => map.set(type, v.sizes));
     return map;
-  }, [payments, student.id]);
+  }, [derivedPackages]);
 
   // Translate a 1-based global lesson number for a class type into its package
   // index and position within that package, using the real purchased sizes.
@@ -200,7 +202,14 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
           // zero-cost renewal still shows up. The payment RPC is the only thing
           // that touches balance.
           await onUpdatePayment(student.id, Math.max(0, renewCost), {
-              date: localDateOnlyToISO(renewDate),
+              // A same-day purchase keeps its real time. Stamping it at local
+              // midnight would sort it BEFORE a refund taken earlier today, and
+              // derivePackages would then charge that refund against this brand
+              // new package instead of the old one. Back-dated purchases keep the
+              // midnight convention — there is no true time to recover for them.
+              date: renewDate === todayLocalKey()
+                  ? new Date().toISOString()
+                  : localDateOnlyToISO(renewDate),
               method: renewMethod || 'WeChat',
               classCount: renewClasses,
               classType: renewType
@@ -451,6 +460,12 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
 
   const saveEditPayment = async () => {
       if (!editPaymentData || !onSavePayment) return;
+      // A blank amount field parks NaN in state so the "-" keystroke survives;
+      // it must never reach the RPC, where it would null out the balance delta.
+      if (!Number.isFinite(editPaymentData.amount)) {
+          setSaveError('Enter an amount (use a negative number for a refund).');
+          return;
+      }
       try {
           setIsSaving(true);
           setSaveError(null);
@@ -757,24 +772,18 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
                         For each class type, the latest payment's classCount = current package size.
                         Progress = sessions attended after subtracting earlier (finished) payments. */}
                     {(() => {
-                        // Group this student's payments by classType, sorted by date asc
-                        const myPayments = (payments || [])
-                            .filter(p => p.studentId === student.id && p.classType && typeof p.classCount === 'number' && (p.classCount as number) > 0)
-                            .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-                        const byType = new Map<ClassType, Payment[]>();
-                        myPayments.forEach(p => {
-                            const t = p.classType as ClassType;
-                            if (!byType.has(t)) byType.set(t, []);
-                            byType.get(t)!.push(p);
-                        });
-                        if (byType.size === 0) return null;
+                        // Package sizes come from derivePackages, so a refund has already
+                        // been deducted from the package it was charged back against.
+                        if (derivedPackages.size === 0) return null;
                         type Visible = { type: ClassType; total: number; previousTotal: number; latestPaymentDate: string };
                         const visible: Visible[] = [];
-                        byType.forEach((list, type) => {
-                            const latest = list[list.length - 1];
-                            const previousTotal = list.slice(0, -1).reduce((sum, p) => sum + (p.classCount || 0), 0);
-                            visible.push({ type, total: latest.classCount || 0, previousTotal, latestPaymentDate: latest.date });
+                        derivedPackages.forEach(({ sizes, latestPurchaseDate }, type) => {
+                            if (sizes.length === 0) return;
+                            const total = sizes[sizes.length - 1];
+                            const previousTotal = sizes.slice(0, -1).reduce((sum, n) => sum + n, 0);
+                            visible.push({ type, total, previousTotal, latestPaymentDate: latestPurchaseDate });
                         });
+                        if (visible.length === 0) return null;
                         return (
                         <div className="space-y-3">
                             {visible.map(({ type, total, previousTotal, latestPaymentDate }) => {
@@ -784,7 +793,8 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
                                 // Subtract sessions that belong to earlier (finished) packages of the same type
                                 const attendedForType = Math.max(0, Math.min(total, totalAttendedForType - previousTotal));
                                 const isEditing = false; // legacy package edit form is disabled in payment-driven mode
-                                const progress = Math.min(100, Math.round((attendedForType / total) * 100));
+                                // total can be 0 when a package was refunded in full — guard the divide.
+                                const progress = total > 0 ? Math.min(100, Math.round((attendedForType / total) * 100)) : 100;
                                 const pkg = { type, total, active: true } as ClassPackage;
                                 const idx = -1;
                                 
@@ -1183,6 +1193,7 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
                                                     {session.type}
                                                 </span>
                                             </div>
+                                            {session.teacherId && <p className="text-xs text-stone-500 mt-1">Teacher: {teacherMap.get(session.teacherId) || 'Unknown'}</p>}
                                             {session.notes && <p className="text-xs text-stone-500 mt-1">{session.notes}</p>}
                                             <span className={`inline-block mt-2 text-xs px-2 py-0.5 rounded-full ${
                                                 myStatus === AttendanceStatus.Present ? 'bg-emerald-100 text-emerald-700' :
@@ -1244,11 +1255,22 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
                                                         <div className="grid grid-cols-2 gap-3">
                                                             <div>
                                                                 <label className="block text-[10px] uppercase font-bold text-stone-500 mb-1">Amount ({CURRENCY_SYMBOLS.CNY})</label>
+                                                                {/* No min: a refund row carries a NEGATIVE amount. Empty/partial
+                                                                    input maps to '' rather than 0 — coercing the intermediate
+                                                                    "-" state to 0 makes React rewrite the box and eat the minus,
+                                                                    so a refund could never be retyped. */}
                                                                 <input
                                                                     type="number"
-                                                                    min="0"
-                                                                    value={editPaymentData.amount}
-                                                                    onChange={e => setEditPaymentData({ ...editPaymentData, amount: parseFloat(e.target.value) || 0 })}
+                                                                    placeholder="negative = refund"
+                                                                    value={Number.isFinite(editPaymentData.amount) ? editPaymentData.amount : ''}
+                                                                    onChange={e => {
+                                                                        const v = e.target.value;
+                                                                        const n = parseFloat(v);
+                                                                        setEditPaymentData({
+                                                                            ...editPaymentData,
+                                                                            amount: v === '' || Number.isNaN(n) ? NaN : n
+                                                                        });
+                                                                    }}
                                                                     className="w-full p-2 rounded-md border text-xs"
                                                                 />
                                                             </div>
@@ -1257,7 +1279,16 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
                                                                 <input
                                                                     type="date"
                                                                     value={dateValue}
-                                                                    onChange={e => setEditPaymentData({ ...editPaymentData, date: localDateOnlyToISO(e.target.value) })}
+                                                                    onChange={e => {
+                                                                        // Preserve the original intraday time when the day itself
+                                                                        // hasn't changed. Collapsing to local midnight would re-sort
+                                                                        // this payment before a same-day refund and hand the refund
+                                                                        // to the wrong package.
+                                                                        const next = e.target.value === localDateKey(editPaymentData.date)
+                                                                            ? editPaymentData.date
+                                                                            : localDateOnlyToISO(e.target.value);
+                                                                        setEditPaymentData({ ...editPaymentData, date: next });
+                                                                    }}
                                                                     className="w-full p-2 rounded-md border text-xs"
                                                                 />
                                                             </div>
@@ -1265,17 +1296,21 @@ const StudentDetail: React.FC<StudentDetailProps> = ({ student, sessions, paymen
                                                         <div className="grid grid-cols-2 gap-3">
                                                             <div>
                                                                 <label className="block text-[10px] uppercase font-bold text-stone-500 mb-1">Number of Classes</label>
+                                                                {/* No lower clamp: a refund row legitimately carries a
+                                                                    NEGATIVE classCount. Clamping to 0 would silently turn
+                                                                    an edited refund back into a purchase and hand the
+                                                                    student their classes back while the money stayed out. */}
                                                                 <input
                                                                     type="number"
-                                                                    min="0"
                                                                     step="1"
-                                                                    placeholder="e.g. 10"
+                                                                    placeholder="e.g. 10 (negative = refund)"
                                                                     value={editPaymentData.classCount ?? ''}
                                                                     onChange={e => {
                                                                         const v = e.target.value;
+                                                                        const n = parseInt(v, 10);
                                                                         setEditPaymentData({
                                                                             ...editPaymentData,
-                                                                            classCount: v === '' ? undefined : Math.max(0, parseInt(v, 10) || 0)
+                                                                            classCount: v === '' || Number.isNaN(n) ? undefined : n
                                                                         });
                                                                     }}
                                                                     className="w-full p-2 rounded-md border text-xs"

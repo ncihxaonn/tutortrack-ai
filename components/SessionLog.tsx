@@ -1,23 +1,38 @@
 import React, { useMemo, useState } from 'react';
-import { Session, Student, AttendanceStatus, ClassType, StudentSessionStatus, SkillProgress, Teacher } from '../types';
+import { Session, Student, Payment, AttendanceStatus, ClassType, StudentSessionStatus, SkillProgress, Teacher } from '../types';
 import { Calendar as CalendarIcon, CheckCircle, AlertTriangle, ChevronLeft, ChevronRight, X, Trash2, Search, ChevronDown, ChevronUp, MoreVertical, TrendingUp } from 'lucide-react';
 import { PRICE_1ON1, PRICE_GROUP, DEFAULT_SESSION_MINUTES, SESSION_DURATION_CHOICES } from '../constants';
 import { localDateKey, localDateTimeToISO, todayLocalKey, newId, formatDuration, formatDurationShort } from '../lib/dateUtils';
+import { derivePackages, refundableSessions } from '../lib/packages';
+import { isChargeableForStudent } from '../lib/sessionHelpers';
+
+export interface RefundInput {
+  studentId: string;
+  /** Positive figure as typed by the user; recorded as a negative payment. */
+  amount: number;
+  /** Sessions to return to the student; recorded as a negative classCount. */
+  sessions: number;
+  classType: ClassType;
+  reason: string;
+}
 
 interface SessionLogProps {
   sessions: Session[];
   students: Student[];
   teachers: Teacher[];
+  /** Used by the refund panel to show what the student actually has left. */
+  payments?: Payment[];
   onAddSession: (session: Omit<Session, 'id'>) => Promise<Session>;
   onUpdateSession: (session: Session) => Promise<void> | void;
   onDeleteSession: (id: string) => Promise<void> | void;
   onUpdateStudent: (student: Student) => Promise<void> | void;
+  onRefund?: (input: RefundInput) => Promise<void> | void;
   onSelectStudent?: (student: Student) => void;
 }
 
 type ViewMode = 'year' | 'month' | 'week';
 
-const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, onAddSession, onUpdateSession, onDeleteSession, onUpdateStudent }) => {
+const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, payments = [], onAddSession, onUpdateSession, onDeleteSession, onUpdateStudent, onRefund }) => {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewMode, setViewMode] = useState<ViewMode>('month');
 
@@ -52,6 +67,17 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
   const [isStudentDropdownOpen, setIsStudentDropdownOpen] = useState(false);
   const [studentSearch, setStudentSearch] = useState('');
 
+  // Refund State
+  const [showRefundForm, setShowRefundForm] = useState(false);
+  const [refundStudentId, setRefundStudentId] = useState<string>('');
+  const [refundSessions, setRefundSessions] = useState<number>(0);
+  const [refundAmount, setRefundAmount] = useState<number>(0);
+  const [refundClassType, setRefundClassType] = useState<ClassType>(ClassType.OneOnOne);
+  const [refundNotes, setRefundNotes] = useState<string>('');
+  // Kept separate from `saveError` so a refund failure doesn't render inside the
+  // session form (and vice versa) — they are two independent submissions.
+  const [refundError, setRefundError] = useState<string | null>(null);
+
   // Memoize lookup maps so calendar rows aren't doing N*M finds.
   const studentsById = useMemo(() => {
     const m = new Map<string, Student>();
@@ -83,6 +109,43 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
     s.status === 'Active' &&
     s.name.toLowerCase().includes(studentSearch.toLowerCase())
   ), [students, studentSearch]);
+
+  // What the refund student actually has left, per class type. A refund can only
+  // be charged back against a package that exists, so the form is driven by this
+  // rather than by a hardcoded default that is wrong for every Group-only student.
+  const refundableByType = useMemo(() => {
+    const out = new Map<ClassType, number>();
+    if (!refundStudentId) return out;
+    const pkgs = derivePackages(payments, refundStudentId);
+    pkgs.forEach(({ netPurchased }, type) => {
+      const attended = sessions.filter(s =>
+        s.studentIds.includes(refundStudentId) &&
+        s.type === type &&
+        isChargeableForStudent(s, refundStudentId)
+      ).length;
+      // Global net-minus-attended, NOT the current package's slice: once a
+      // refund shrinks a package below what was already taken from it, the
+      // per-package figure disagrees with reality.
+      out.set(type, refundableSessions(netPurchased, attended));
+    });
+    return out;
+  }, [payments, sessions, refundStudentId]);
+
+  // Selecting a student re-points the class type at a package they really hold,
+  // so the common case needs no thought and the wrong case is not the default.
+  const selectRefundStudent = (id: string) => {
+    setRefundStudentId(id);
+    setRefundError(null);
+    if (!id) return;
+    const pkgs = derivePackages(payments, id);
+    const owned = [ClassType.OneOnOne, ClassType.Group].filter(t => (pkgs.get(t)?.sizes.length ?? 0) > 0);
+    if (owned.length > 0 && !owned.includes(refundClassType)) setRefundClassType(owned[0]);
+  };
+
+  const refundRemaining = refundStudentId ? refundableByType.get(refundClassType) : undefined;
+  const refundTypeUnowned = !!refundStudentId && refundRemaining === undefined;
+  const refundExceedsRemaining =
+    refundRemaining !== undefined && refundSessions > refundRemaining;
 
   // Calendar Logic Helpers
   const getDaysInMonth = (d: Date) => {
@@ -175,6 +238,9 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
     setTeacherId(session.teacherId || '');
     setTempProgress({});
     setSaveError(null);
+    // Editing a session must not inherit a refund draft left over from an
+    // earlier modal — that draft targets a different student entirely.
+    resetRefundForm();
     setIsModalOpen(true);
   };
 
@@ -357,6 +423,58 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
     }
   };
 
+  // A refund is recorded as a NEGATIVE payment through the same atomic RPC that
+  // records purchases — `balance` is owned by Postgres and must never be written
+  // from the client. Negative `classCount` shrinks the student's current package.
+  const handleRefund = async () => {
+    if (!refundStudentId || !onRefund) return;
+    if (refundAmount <= 0 && refundSessions <= 0) {
+      setRefundError('Enter a refund amount and/or a number of sessions.');
+      return;
+    }
+    // Never let the money leg fire when the session leg provably cannot: a
+    // refund against a package the student does not hold pays out for nothing.
+    if (refundSessions > 0 && refundTypeUnowned) {
+      setRefundError(`${studentsById.get(refundStudentId)?.name ?? 'This student'} has no ${refundClassType} package to refund against.`);
+      return;
+    }
+    if (refundExceedsRemaining) {
+      setRefundError(`Only ${refundRemaining} unused ${refundClassType} session(s) remain — cannot return ${refundSessions}.`);
+      return;
+    }
+    setIsSaving(true);
+    setRefundError(null);
+    try {
+      await onRefund({
+        studentId: refundStudentId,
+        amount: refundAmount,
+        sessions: refundSessions,
+        classType: refundClassType,
+        reason: refundNotes.trim()
+      });
+      // Use the canonical reset — a hand-rolled one here previously left
+      // refundClassType pointing at the last student's package type.
+      resetRefundForm();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setRefundError(`Failed to process refund: ${msg}`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // A refund is money leaving the business, so an abandoned draft must never
+  // survive to be fired later against whichever student is on screen next.
+  const resetRefundForm = () => {
+    setShowRefundForm(false);
+    setRefundStudentId('');
+    setRefundSessions(0);
+    setRefundAmount(0);
+    setRefundClassType(ClassType.OneOnOne);
+    setRefundNotes('');
+    setRefundError(null);
+  };
+
   const resetForm = () => {
     setSelectedStudents([]);
     setStudentStatuses({});
@@ -370,9 +488,16 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
     setIsStudentDropdownOpen(false);
     setTempProgress({});
     setCurrentProgressStudentId(null);
+    resetRefundForm();
     setIsTrial(false);
     setTeacherId('');
     setSaveError(null);
+  };
+
+  // Every path that closes the modal goes through here, so no draft outlives it.
+  const closeModal = () => {
+    setIsModalOpen(false);
+    resetForm();
   };
 
   // --- Renderers ---
@@ -638,7 +763,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
               <h3 className="text-lg font-serif font-semibold tracking-tight text-stone-800">
                 {editingSessionId ? 'Edit Session' : 'Log New Session'}
               </h3>
-              <button onClick={() => setIsModalOpen(false)} aria-label="Close" className="text-stone-400 hover:text-stone-600">
+              <button onClick={closeModal} aria-label="Close" className="text-stone-400 hover:text-stone-600">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -876,6 +1001,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
                 rows={3}
               />
 
+
               {saveError && <p className="text-xs text-red-600">{saveError}</p>}
 
               <div className="flex justify-between pt-2">
@@ -894,7 +1020,7 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
                 <div className="flex gap-2">
                   <button
                     type="button"
-                    onClick={() => setIsModalOpen(false)}
+                    onClick={closeModal}
                     disabled={isSaving}
                     className="px-4 py-2 text-stone-600 hover:bg-cream rounded-md disabled:opacity-50"
                   >
@@ -910,6 +1036,159 @@ const SessionLog: React.FC<SessionLogProps> = ({ sessions, students, teachers, o
                 </div>
               </div>
             </form>
+
+            {/* Refund Section — deliberately OUTSIDE the session <form> so pressing
+                Enter in a refund field can't submit (and re-charge) a session. */}
+            <div className="px-6 pb-6 border-t border-cream-border pt-5">
+              <button
+                type="button"
+                onClick={() => setShowRefundForm(!showRefundForm)}
+                className="flex items-center gap-2 text-sm font-medium text-stone-600 hover:text-stone-800 mb-4"
+              >
+                <span>{showRefundForm ? '−' : '+'}</span>
+                <span>Process Refund</span>
+              </button>
+
+              {showRefundForm && (
+                <div className="bg-red-50 p-4 rounded-lg border border-red-200 space-y-3">
+                  <p className="text-xs text-stone-600">
+                    Records a refund against the student's account: the money comes off their
+                    paid balance and the sessions come off their remaining package.
+                  </p>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-stone-600 mb-1">Student</label>
+                      <select
+                        aria-label="Refund student"
+                        value={refundStudentId}
+                        onChange={e => selectRefundStudent(e.target.value)}
+                        className="w-full p-2 border rounded-md text-sm bg-white"
+                      >
+                        <option value="">— Select Student —</option>
+                        {/* Archived students can still be refunded — leaving is the
+                            most common reason a refund happens at all. */}
+                        {students.map(s => (
+                          <option key={s.id} value={s.id}>
+                            {s.name}{s.status === 'Archived' ? ' (archived)' : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-stone-600 mb-1">Package Type</label>
+                      <select
+                        aria-label="Refund class type"
+                        value={refundClassType}
+                        onChange={e => { setRefundClassType(e.target.value as ClassType); setRefundError(null); }}
+                        className="w-full p-2 border rounded-md text-sm bg-white"
+                      >
+                        <option value={ClassType.OneOnOne}>One-on-One</option>
+                        <option value={ClassType.Group}>One-on-Two</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {refundStudentId && (
+                    refundTypeUnowned ? (
+                      <p className="text-xs text-red-700 bg-red-100 border border-red-200 rounded p-2">
+                        This student has no {refundClassType} package. Refunding sessions against it
+                        would return the money but no sessions — pick the type they actually bought,
+                        or leave sessions at 0 to refund money only.
+                      </p>
+                    ) : (
+                      <p className="text-xs text-stone-600">
+                        {/* This is the student's TOTAL unused sessions of this type
+                            across every package, not just the newest one — refunds
+                            cascade backwards, so the global figure is the real cap. */}
+                        Unused {refundClassType} sessions available to refund:{' '}
+                        <span className="font-semibold text-stone-800">{refundRemaining}</span>
+                      </p>
+                    )
+                  )}
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-stone-600 mb-1">Sessions to Refund</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        aria-label="Sessions to refund"
+                        value={refundSessions || ''}
+                        onChange={e => setRefundSessions(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                        placeholder="e.g. 4"
+                        className="w-full p-2 border rounded-md text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-stone-600 mb-1">Refund Amount (¥)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        aria-label="Refund amount"
+                        value={refundAmount || ''}
+                        onChange={e => setRefundAmount(Math.max(0, parseFloat(e.target.value) || 0))}
+                        placeholder="e.g. 160"
+                        className="w-full p-2 border rounded-md text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-stone-600 mb-1">Reason (optional)</label>
+                    <input
+                      type="text"
+                      aria-label="Refund reason"
+                      value={refundNotes}
+                      onChange={e => setRefundNotes(e.target.value)}
+                      placeholder="e.g. Stopped lessons, unused classes…"
+                      className="w-full p-2 border rounded-md text-sm"
+                    />
+                  </div>
+
+                  {refundExceedsRemaining && (
+                    <p className="text-xs text-amber-900 bg-amber-100 border border-amber-200 rounded p-2">
+                      Only {refundRemaining} unused {refundClassType} session
+                      {refundRemaining === 1 ? '' : 's'} left — you cannot return {refundSessions}.
+                      Lower the count, or set sessions to 0 to refund money only.
+                    </p>
+                  )}
+
+                  {refundError && <p className="text-xs text-red-700">{refundError}</p>}
+
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleRefund}
+                      disabled={
+                        isSaving ||
+                        !onRefund ||
+                        !refundStudentId ||
+                        // Only the sessions leg needs a matching package; a
+                        // money-only refund is valid on its own.
+                        (refundTypeUnowned && refundSessions > 0) ||
+                        // Returning more sessions than exist would move money
+                        // with nothing to deduct — the two legs must agree.
+                        refundExceedsRemaining ||
+                        (refundAmount <= 0 && refundSessions <= 0)
+                      }
+                      className="flex-1 px-3 py-2 bg-red-600 text-white rounded-md text-sm font-medium hover:bg-red-700 disabled:opacity-50"
+                    >
+                      {isSaving ? 'Processing…' : 'Process Refund'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={resetRefundForm}
+                      className="px-3 py-2 text-stone-600 hover:bg-stone-100 rounded-md text-sm"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* Nested Modal for Progress Editing */}
             {progressModalOpen && currentProgressStudentId && (

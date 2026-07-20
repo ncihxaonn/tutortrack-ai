@@ -221,9 +221,21 @@ const Admin: React.FC<AdminProps> = ({ students, payments, onUpdatePayment, onDe
                     <p className="text-xs text-stone-500">{new Date(payment.date).toLocaleDateString()} · {payment.method}</p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    <span className="font-semibold text-emerald-700 bg-emerald-50 px-2 py-1 rounded text-sm">
-                      +{formatMoney(payment.amount, currency, rate)}
-                    </span>
+                    {/* A refund is a negative payment. formatMoney already emits its
+                        own '-', so a hardcoded '+' would render "+-¥160" — and in
+                        green, reading as money received when it was money returned.
+                        A sessions-only refund has amount 0, so the classCount sign
+                        is what marks it: 0 < 0 is false and would slip through. */}
+                    {(() => {
+                      const isRefund = payment.amount < 0 || (payment.classCount ?? 0) < 0;
+                      return (
+                        <span className={`font-semibold px-2 py-1 rounded text-sm ${
+                          isRefund ? 'text-red-700 bg-red-50' : 'text-emerald-700 bg-emerald-50'
+                        }`}>
+                          {isRefund || payment.amount < 0 ? '' : '+'}{formatMoney(payment.amount, currency, rate)}
+                        </span>
+                      );
+                    })()}
                     <button onClick={() => setEditingPayment(payment)} title="Edit payment" className="p-1.5 text-stone-400 hover:text-coral-600 hover:bg-coral-50 rounded-md transition-colors">
                       <Pencil className="w-3.5 h-3.5" />
                     </button>
@@ -291,13 +303,25 @@ const EditPaymentModal: React.FC<EditPaymentModalProps> = ({ payment, students, 
   const [method, setMethod] = useState(payment.method);
   const [studentId, setStudentId] = useState(payment.studentId);
 
+  const [localError, setLocalError] = useState<string | null>(null);
+
   const handleSave = async () => {
     const parsed = parseFloat(amount);
-    if (isNaN(parsed) || parsed <= 0) return;
+    // Refunds are payments with a NEGATIVE amount, so `parsed <= 0` would make
+    // every refund row silently unsavable — the old guard returned without
+    // surfacing anything, leaving the modal looking hung.
+    if (isNaN(parsed)) {
+      setLocalError('Enter an amount (use a negative number for a refund).');
+      return;
+    }
+    setLocalError(null);
     await onSave({
       ...payment,
       amount: parsed,
-      date: localDateOnlyToISO(date),
+      // Keep the original timestamp when the day is unchanged. Re-stamping to
+      // local midnight would re-sort this payment before a same-day refund and
+      // charge that refund against the wrong package.
+      date: date === localDateKey(payment.date) ? payment.date : localDateOnlyToISO(date),
       method: method.trim() || 'Manual',
       studentId
     });
@@ -328,7 +352,7 @@ const EditPaymentModal: React.FC<EditPaymentModalProps> = ({ payment, students, 
             <input type="text" value={method} onChange={(e) => setMethod(e.target.value)} placeholder="Cash, Bank Transfer, etc." className="w-full px-3 py-2 border border-cream-border rounded-lg focus:outline-none focus:ring-2 focus:ring-coral-500 text-sm" />
           </div>
         </div>
-        {error && <p className="text-sm text-red-600 mt-3">{error}</p>}
+        {(localError || error) && <p className="text-sm text-red-600 mt-3">{localError || error}</p>}
         <div className="flex justify-end gap-2 mt-6">
           <button onClick={onClose} disabled={!!isSaving} className="px-4 py-2 text-sm font-medium text-stone-700 bg-cream hover:bg-cream-soft rounded-lg transition-colors disabled:opacity-50">Cancel</button>
           <button onClick={handleSave} disabled={!!isSaving} className="px-4 py-2 text-sm font-medium text-white bg-coral-600 hover:bg-coral-700 rounded-lg transition-colors disabled:opacity-50">{isSaving ? 'Saving…' : 'Save'}</button>

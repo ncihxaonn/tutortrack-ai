@@ -14,7 +14,8 @@ export default defineConfig(({ mode }) => {
 
   return {
     server: {
-      port: 3000,
+      // Honour PORT when the harness assigns one; 3000 stays the default.
+      port: Number(process.env.PORT) || 3000,
       host: '0.0.0.0'
     },
     plugins: [react()],
